@@ -29,6 +29,10 @@ Open the **Developer calibration** tab to access live, persistent calibration co
 
 Three-finger application switching is disabled by default to keep ordinary pointer tracking unchanged. Enable it in Developer calibration under **Swipes**. It uses the raw center of either hand's index, middle, and ring fingertips; the thumb and little finger must remain folded. Right/left sends Alt+Tab/Alt+Shift+Tab, up opens Windows Task View, and down shows the desktop. The Swipes controls expose all thresholds and an optional live debug readout in the camera status pill.
 
+## Download for Windows
+
+For a normal installation, download **`AirPoint_Setup_1.0.0.exe`** from the [latest release](https://github.com/Notmytypeo/AirPoint/releases/latest), run it, and follow the installer. No Python installation is required.
+
 ## Run
 
 Requirements: Windows 10/11, a webcam, and Python 3.10 or newer.
