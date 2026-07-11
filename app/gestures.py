@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import deque
 import math
+from statistics import median
 
 from .filters import PointFilter
+from .swipe import SwipeResult, SwipeState, ThreeFingerSwipeDetector
+from .tuning import normalized_tuning
+
 
 
 @dataclass(frozen=True)
@@ -17,6 +22,7 @@ class Landmark:
 class HandObservation:
     handedness: str
     landmarks: tuple[Landmark, ...]
+    world_landmarks: tuple[Landmark, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -78,6 +84,20 @@ def is_open_palm(points: tuple[Landmark, ...]) -> bool:
     )
 
 
+def is_right_click_pose(points: tuple[Landmark, ...]) -> bool:
+    """Middle-thumb contact is a right click only with the other fingers open."""
+    if len(points) < 21:
+        return False
+    return all(
+        _finger_extended(points, *finger)
+        for finger in (
+            (5, 6, 7, 8),
+            (13, 14, 15, 16),
+            (17, 18, 19, 20),
+        )
+    )
+
+
 def is_two_finger_scroll_pose(points: tuple[Landmark, ...]) -> bool:
     """Index and middle are raised while ring and little fingers are folded."""
     if len(points) < 21:
@@ -120,6 +140,7 @@ class GestureEngine:
         self.sensitivity = 1.0
         self.screen = (0, 0, 1920, 1080)
         self.left_handed = False
+        self.tuning = normalized_tuning()
         self.paused = False
         self._filter = PointFilter()
         self._pinch_drag_filter = PointFilter()
@@ -127,6 +148,7 @@ class GestureEngine:
         self._middle_pinched = False
         self._left_index_pinched = False
         self._pinch_filtered: dict[str, float] = {}
+        self._pinch_history: dict[str, deque[float]] = {}
         self._pinch_candidate_since: dict[str, float] = {}
         self._pinch_release_since: dict[str, float] = {}
         self._zoom_mode = False
@@ -147,21 +169,43 @@ class GestureEngine:
         self._volume_y: float | None = None
         self._scroll_y: float | None = None
         self._two_finger_scroll_y: float | None = None
+        self._two_finger_scroll_x: float | None = None
         self._two_finger_scroll_last_emit = -10.0
         self._pointer_resume_at = -10.0
         self._last_pointer_point: Landmark | None = None
         self._pinch_offset = (0.0, 0.0)
         self._missing_since: float | None = None
+        self._swipes = {"right": ThreeFingerSwipeDetector(), "left": ThreeFingerSwipeDetector()}
+        self._configure_filters()
+
+    def _configure_filters(self) -> None:
+        settings = self.tuning
+        for motion_filter in (self._filter, self._pinch_drag_filter):
+            motion_filter.configure(
+                dead_zone=settings["pointer_dead_zone"],
+                lookahead_frames=settings["prediction_frames"],
+                min_cutoff=settings["pointer_min_cutoff"],
+                beta=settings["pointer_beta"],
+                prediction_cap=settings["prediction_cap"],
+                precision_step=settings["precision_step"],
+                precision_speed_floor=settings["precision_speed_floor"],
+            )
 
     def configure(
         self,
         sensitivity: float,
         screen: tuple[int, int, int, int],
         left_handed: bool = False,
+        tuning: dict[str, float] | None = None,
     ) -> None:
         self.sensitivity = max(0.5, min(1.8, sensitivity))
         self.screen = screen
         self.left_handed = left_handed
+        if tuning is not None:
+            normalized = normalized_tuning(tuning)
+            if normalized != self.tuning:
+                self.tuning = normalized
+                self._configure_filters()
 
     def reset(self, keep_pause: bool = False) -> tuple[GestureAction, ...]:
         actions: list[GestureAction] = []
@@ -173,9 +217,10 @@ class GestureEngine:
         sensitivity = self.sensitivity
         screen = self.screen
         left_handed = self.left_handed
-        self.__init__()
+        tuning = self.tuning
+        self.__init__()  # type: ignore[misc]
         self.paused = paused
-        self.configure(sensitivity, screen, left_handed)
+        self.configure(sensitivity, screen, left_handed, tuning)
         return tuple(actions)
 
     def set_paused(self, paused: bool) -> tuple[GestureAction, ...]:
@@ -192,6 +237,7 @@ class GestureEngine:
         self._middle_pinched = False
         self._left_index_pinched = False
         self._pinch_filtered.clear()
+        self._pinch_history.clear()
         self._pinch_candidate_since.clear()
         self._pinch_release_since.clear()
         self._zoom_mode = False
@@ -202,10 +248,14 @@ class GestureEngine:
         self._volume_y = None
         self._scroll_y = None
         self._two_finger_scroll_y = None
+        self._two_finger_scroll_x = None
         self._two_finger_scroll_last_emit = -10.0
         self._left_fist_last_seen = -10.0
         self._last_pointer_point = None
         self._pinch_offset = (0.0, 0.0)
+        self._missing_since = None
+        for detector in self._swipes.values():
+            detector.reset()
         self._filter.reset()
         self._pinch_drag_filter.reset()
         return tuple(actions)
@@ -215,53 +265,88 @@ class GestureEngine:
         return next((hand for hand in hands if hand.handedness.lower() == name.lower()), None)
 
     @staticmethod
-    def _pinch_ratio(points: tuple[Landmark, ...], tip: int) -> float:
-        # Preserve the original 2D fingertip detector. Palm length is only a
-        # fallback when projected palm width collapses in an edge-on view.
+    def _normalized_distance(points: tuple[Landmark, ...], tip: int, include_depth: bool) -> float:
+        def distance(a: Landmark, b: Landmark) -> float:
+            if include_depth:
+                return math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2)
+            return math.hypot(a.x - b.x, a.y - b.y)
+
         palm_scale = max(
-            _distance(points[5], points[17]),
-            _distance(points[0], points[9]) * 0.72,
+            distance(points[5], points[17]),
+            distance(points[0], points[9]) * 0.72,
             0.035,
         )
-        return _distance(points[4], points[tip]) / palm_scale
+        return distance(points[4], points[tip]) / palm_scale
+
+    def _pinch_ratio(self, hand: HandObservation | tuple[Landmark, ...], tip: int) -> float:
+        """Blend calibrated 2D contact with world-depth geometry when present.
+
+        Image landmarks remain the stable contact signal for a head-on pinch;
+        MediaPipe world landmarks add depth separation so an edge-on projected
+        overlap does not become a false pinch. A blend avoids making click
+        recognition depend entirely on the noisier depth estimate.
+        """
+        if not isinstance(hand, HandObservation):
+            return self._normalized_distance(hand, tip, include_depth=False)
+
+        image_ratio = self._normalized_distance(hand.landmarks, tip, include_depth=False)
+        if hand.world_landmarks is None or len(hand.world_landmarks) < 21:
+            return image_ratio
+        world_ratio = self._normalized_distance(hand.world_landmarks, tip, include_depth=True)
+        blend = self.tuning["pinch_3d_blend"]
+        return image_ratio * (1.0 - blend) + world_ratio * blend
 
     def _stable_pinch(self, key: str, ratio: float, was_pinched: bool, timestamp: float) -> bool:
-        """Low-latency pinch hysteresis with protection from landmark flicker."""
-        previous = self._pinch_filtered.get(key, ratio)
-        # Contact gets slightly more weight than release so real pinches feel
-        # immediate while a single outward landmark jump cannot end a hold.
-        alpha = 0.68 if ratio < previous else 0.58
-        filtered = previous * (1.0 - alpha) + ratio * alpha
+        """Fast median-plus-low-pass pinch channel with hysteresis."""
+        history = self._pinch_history.setdefault(key, deque(maxlen=3))
+        history.append(ratio)
+        # The 3-sample median ignores a one-frame landmark jump, while the raw
+        # value is retained until the history is warm so a first real contact
+        # remains immediate.
+        median_ratio = median(history) if len(history) == 3 else ratio
+        previous = self._pinch_filtered.get(key, median_ratio)
+        # Deliberately light smoothing: enough to settle frame noise without
+        # adding a noticeable hold before a gesture begins.
+        alpha = self.tuning["pinch_alpha_contact"] if median_ratio < previous else self.tuning["pinch_alpha_release"]
+        filtered = previous * (1.0 - alpha) + median_ratio * alpha
         self._pinch_filtered[key] = filtered
 
         if was_pinched:
             self._pinch_candidate_since.pop(key, None)
-            if filtered < 0.50:
+            # A deep current contact wins over a trailing median window. This
+            # prevents a brief outward wobble from releasing a held pinch.
+            if ratio <= self.tuning["pinch_deep_contact"]:
+                self._pinch_release_since.pop(key, None)
+                return True
+            # A clearly open current pose must release immediately; the median
+            # may still contain the two preceding contact frames.
+            if ratio >= self.tuning["pinch_clear_release"]:
+                self._pinch_release_since.pop(key, None)
+                return False
+            if filtered < self.tuning["pinch_hold_release"]:
                 self._pinch_release_since.pop(key, None)
                 return True
             # A clearly open finger should release immediately; only ambiguous
             # values near the boundary receive a short dropout grace period.
-            if ratio >= 0.75 and filtered >= 0.58:
-                self._pinch_release_since.pop(key, None)
-                return False
             release_since = self._pinch_release_since.setdefault(key, timestamp)
-            if timestamp - release_since < 0.075:
+            if timestamp - release_since < self.tuning["pinch_release_grace"]:
                 return True
             self._pinch_release_since.pop(key, None)
             return False
 
         self._pinch_release_since.pop(key, None)
-        # Raw deep contact is trusted immediately even when the preceding open
-        # frame keeps the smoothed value temporarily above the boundary.
-        if ratio <= 0.30:
+        # A cold signal can trust a deep contact immediately. Once warm, the
+        # median requires the contact to survive one additional frame, which
+        # removes isolated detector spikes with only a single-frame cost.
+        if len(history) < 3 and ratio <= self.tuning["pinch_deep_contact"]:
             self._pinch_candidate_since.pop(key, None)
             return True
-        if ratio >= 0.34 or filtered >= 0.34:
+        if ratio >= self.tuning["pinch_contact"] or filtered >= self.tuning["pinch_contact"]:
             self._pinch_candidate_since.pop(key, None)
             return False
         # Strong fingertip contact remains single-frame responsive. A shallow
         # boundary contact must persist briefly before it becomes a click.
-        if filtered <= 0.32:
+        if filtered <= self.tuning["pinch_confirm"]:
             self._pinch_candidate_since.pop(key, None)
             return True
         candidate_since = self._pinch_candidate_since.setdefault(key, timestamp)
@@ -272,21 +357,56 @@ class GestureEngine:
 
     def _clear_pinch_signal(self, key: str) -> None:
         self._pinch_filtered.pop(key, None)
+        self._pinch_history.pop(key, None)
         self._pinch_candidate_since.pop(key, None)
         self._pinch_release_since.pop(key, None)
 
-    def _map_pointer(self, point: Landmark, timestamp: float, motion_filter: PointFilter | None = None) -> tuple[int, int]:
+    def _process_app_swipes(
+        self,
+        hands: tuple[HandObservation, ...],
+        timestamp: float,
+        physical_pinch: dict[str, bool],
+    ) -> tuple[SwipeResult | None, str]:
+        """Track independent raw three-finger swipes from either physical hand."""
+        debug = ""
+        visible = {hand.handedness.lower() for hand in hands}
+        for name, detector in self._swipes.items():
+            if name not in visible:
+                detector.reset()
+        for hand in hands:
+            detector = self._swipes.get(hand.handedness.lower())
+            if detector is None:
+                continue
+            result = detector.process(
+                hand.landmarks,
+                timestamp,
+                pinch_active=physical_pinch.get(hand.handedness.lower(), False) or self._dragging,
+                tuning=self.tuning,
+            )
+            if self.tuning["swipe_debug"] and result.state in (SwipeState.ARMED, SwipeState.TRACKING):
+                debug = result.debug_text
+            if result.state == SwipeState.FIRED:
+                return result, debug
+        return None, debug
+
+    def _map_pointer(
+        self,
+        point: Landmark,
+        timestamp: float,
+        motion_filter: PointFilter | None = None,
+        precision_factor: float = 0.0,
+    ) -> tuple[int, int]:
         # The camera frame is mirrored before inference, so x maps naturally.
         # Amplify the central hand workspace so reaching every screen edge does
         # not require shoulder/arm travel. The motion filter still absorbs the
         # extra gain from natural fingertip tremor.
-        zoom = 0.84 + self.sensitivity * 0.48
+        zoom = self.tuning["workspace_base_gain"] + self.sensitivity * self.tuning["workspace_sensitivity_gain"]
         nx = 0.5 + (point.x - 0.5) * zoom
         ny = 0.5 + (point.y - 0.5) * zoom
-        margin_x, margin_y = 0.14, 0.15
+        margin_x = margin_y = self.tuning["workspace_margin"]
         nx = max(0.0, min(1.0, (nx - margin_x) / (1.0 - 2 * margin_x)))
         ny = max(0.0, min(1.0, (ny - margin_y) / (1.0 - 2 * margin_y)))
-        sx, sy = (motion_filter or self._filter).apply(nx, ny, timestamp)
+        sx, sy = (motion_filter or self._filter).apply(nx, ny, timestamp, precision_factor=precision_factor)
         left, top, width, height = self.screen
         return round(left + sx * max(1, width - 1)), round(top + sy * max(1, height - 1))
 
@@ -309,6 +429,14 @@ class GestureEngine:
         actions: list[GestureAction] = []
 
         if right is None:
+            swipe_result, _ = self._process_app_swipes(hands, timestamp, {})
+            if swipe_result is not None:
+                action = {"right": "app_next", "left": "app_previous", "up": "task_view", "down": "show_desktop"}[swipe_result.direction]
+                actions.append(GestureAction(action))
+                gesture = swipe_result.debug_text if self.tuning["swipe_debug"] else (
+                    {"right": "Next application", "left": "Previous application", "up": "Task View", "down": "Show desktop"}[swipe_result.direction]
+                )
+                return GestureFrame(tuple(actions), gesture, False, left is not None, self.paused)
             if self._zoom_mode:
                 actions.append(GestureAction("pinch_cancel"))
                 self._zoom_mode = False
@@ -333,23 +461,37 @@ class GestureEngine:
                 self._volume_y = None
                 self._scroll_y = None
                 self._two_finger_scroll_y = None
+                self._two_finger_scroll_x = None
                 self._last_pointer_point = None
                 self._pinch_offset = (0.0, 0.0)
+                self._pointer_resume_at = -10.0
                 self._filter.reset()
                 self._pinch_drag_filter.reset()
             return GestureFrame(tuple(actions), f"Show your {dominant_name.lower()} hand", False, left is not None, self.paused)
         self._missing_since = None
 
         points = right.landmarks
-        fist = is_fist(points)
+        raw_index_thumb_contact = self._pinch_ratio(right, 8) < self.tuning["pinch_contact"]
+        raw_fist = is_fist(points)
+        # A closed-finger index-thumb pinch is deliberately a valid left-click
+        # pose. Keep raw_fist for pause detection, but do not let it swallow
+        # the dominant-hand click before the pinch state machine sees it.
+        fist = raw_fist and not raw_index_thumb_contact
+        support_fist = left is not None and is_fist(left.landmarks)
+        both_fists = raw_fist and support_fist
         two_finger_scroll = is_two_finger_scroll_pose(points)
         if not two_finger_scroll:
             self._two_finger_scroll_y = None
+            self._two_finger_scroll_x = None
             self._two_finger_scroll_last_emit = -10.0
-        if fist:
+        # Pausing is deliberately a two-fist gesture. While paused, only the
+        # dominant pointer hand needs to make a fist to resume, which makes the
+        # rule mirror naturally in left-handed mode.
+        pause_pose = both_fists if not self.paused else raw_fist
+        if pause_pose:
             if self._fist_since is None:
                 self._fist_since = timestamp
-            if timestamp - self._fist_since >= 0.7 and not self._fist_latched:
+            if timestamp - self._fist_since >= self.tuning["pause_hold_seconds"] and not self._fist_latched:
                 self._fist_latched = True
                 actions.extend(self.set_paused(not self.paused))
                 actions.append(GestureAction("pause_changed", amount=int(self.paused)))
@@ -366,19 +508,28 @@ class GestureEngine:
             if self._index_pinched:
                 actions.append(GestureAction("pinch_cancel"))
                 self._index_pinched = False
-            label = "Hold…" if not self._fist_latched else ("Paused" if self.paused else "Control resumed")
+            if not pause_pose:
+                label = "Paused · hold your active fist to resume" if self.paused else "Show both fists to pause"
+            else:
+                hold_label = "Hold your active fist…" if self.paused else "Hold both fists…"
+                label = hold_label if not self._fist_latched else ("Paused" if self.paused else "Control resumed")
             return GestureFrame(tuple(actions), label, True, left is not None, self.paused)
         if self.paused:
             self._two_finger_scroll_y = None
-            return GestureFrame(tuple(actions), "Paused · hold a fist to resume", True, left is not None, True)
+            self._two_finger_scroll_x = None
+            return GestureFrame(tuple(actions), "Paused · hold your active fist to resume", True, left is not None, True)
 
-        index_ratio = self._pinch_ratio(points, 8)
-        middle_ratio = self._pinch_ratio(points, 12)
+        index_ratio = self._pinch_ratio(right, 8)
+        middle_ratio = self._pinch_ratio(right, 12)
         index_now = self._stable_pinch("index", index_ratio, self._index_pinched, timestamp)
-        middle_now = self._stable_pinch("middle", middle_ratio, self._middle_pinched, timestamp)
+        middle_contact = self._stable_pinch("middle", middle_ratio, self._middle_pinched, timestamp)
+        # Continue filtering middle contact even when its pose is invalid, but
+        # only expose it as a right click while index, ring and little fingers
+        # are all clearly open. This rejects fist-like false right clicks.
+        middle_now = middle_contact and is_right_click_pose(points)
         left_index_now = False
         if left is not None:
-            left_index_ratio = self._pinch_ratio(left.landmarks, 8)
+            left_index_ratio = self._pinch_ratio(left, 8)
             left_index_now = self._stable_pinch("support_index", left_index_ratio, self._left_index_pinched, timestamp)
         else:
             self._clear_pinch_signal("support_index")
@@ -394,6 +545,24 @@ class GestureEngine:
             and (raw_left_fist or timestamp - self._left_fist_last_seen <= 0.18)
         )
 
+        # Check raw three-finger swipes before the open-palm volume gate. Any
+        # actual pinch still blocks swiping and gives existing modes priority.
+        physical_pinch = {
+            dominant_name.lower(): index_now or middle_now,
+            support_name.lower(): left_index_now,
+        }
+        swipe_result, swipe_debug = self._process_app_swipes(hands, timestamp, physical_pinch)
+        if swipe_result is not None:
+            action = {"right": "app_next", "left": "app_previous", "up": "task_view", "down": "show_desktop"}[swipe_result.direction]
+            actions.append(GestureAction(action))
+            self._index_pinched = index_now
+            self._middle_pinched = middle_now
+            self._left_index_pinched = left_index_now
+            gesture = swipe_result.debug_text if self.tuning["swipe_debug"] else (
+                {"right": "Next application", "left": "Previous application", "up": "Task View", "down": "Show desktop"}[swipe_result.direction]
+            )
+            return GestureFrame(tuple(actions), gesture, True, left is not None, False)
+
         both_index_pinched = left is not None and index_now and left_index_now
         both_zoom_ready = (
             both_index_pinched
@@ -401,7 +570,18 @@ class GestureEngine:
             and left_zoom_fingers_open
         )
         if both_zoom_ready or self._zoom_mode:
-            if both_zoom_ready:
+            # If the left hand disappears entirely during a zoom, exit zoom
+            # immediately so the right-hand pinch is not trapped in limbo.
+            if self._zoom_mode and left is None:
+                self._zoom_mode = False
+                self._zoom_last_distance = None
+                self._zoom_smoothed_distance = None
+                self._zoom_reference_distance = 0.0
+                self._zoom_accumulator = 0.0
+                self._left_index_pinched = False
+                self._pointer_resume_at = timestamp + self.tuning["gesture_settle_delay"]
+                # Fall through to normal pointer/click handling below.
+            elif both_zoom_ready:
                 if not self._zoom_mode:
                     if self._dragging:
                         actions.append(GestureAction("left_up"))
@@ -411,23 +591,26 @@ class GestureEngine:
                     self._drag_start_point = None
                     self._drag_moved = False
                     self._zoom_mode = True
+                    assert right is not None and left is not None
                     self._zoom_last_distance = self._two_hand_pinch_distance(right, left)
                     self._zoom_smoothed_distance = self._zoom_last_distance
                     self._zoom_reference_distance = self._zoom_last_distance
                     self._zoom_accumulator = 0.0
                     self._zoom_last_emit = timestamp
                 else:
+                    assert right is not None and left is not None
                     distance = self._two_hand_pinch_distance(right, left)
                     if self._zoom_smoothed_distance is None:
                         self._zoom_smoothed_distance = distance
                     else:
                         previous = self._zoom_smoothed_distance
-                        self._zoom_smoothed_distance = previous * 0.45 + distance * 0.55
+                        smoothing = self.tuning["zoom_smoothing"]
+                        self._zoom_smoothed_distance = previous * (1.0 - smoothing) + distance * smoothing
                         self._zoom_accumulator += self._zoom_smoothed_distance - previous
                     self._zoom_last_distance = distance
-                    step = max(0.018, min(0.035, self._zoom_reference_distance * 0.055))
+                    step = max(0.018, min(0.035, self._zoom_reference_distance * self.tuning["zoom_step_factor"]))
                     self._zoom_accumulator = max(-3 * step, min(3 * step, self._zoom_accumulator))
-                    if abs(self._zoom_accumulator) >= step and timestamp - self._zoom_last_emit >= 0.09:
+                    if abs(self._zoom_accumulator) >= step and timestamp - self._zoom_last_emit >= self.tuning["zoom_emit_interval"]:
                         direction = 1 if self._zoom_accumulator > 0 else -1
                         actions.append(GestureAction("zoom", amount=direction))
                         self._zoom_accumulator -= direction * step
@@ -436,13 +619,13 @@ class GestureEngine:
                 self._index_pinched = index_now
                 self._left_index_pinched = left_index_now
                 self._middle_pinched = middle_now
-                self._pointer_resume_at = timestamp + 0.1
+                self._pointer_resume_at = timestamp + self.tuning["gesture_settle_delay"]
                 return GestureFrame(tuple(actions), gesture, True, True, False)
 
             self._index_pinched = index_now
             self._left_index_pinched = left_index_now
             self._middle_pinched = middle_now
-            self._pointer_resume_at = timestamp + 0.1
+            self._pointer_resume_at = timestamp + self.tuning["gesture_settle_delay"]
             if index_now or left_index_now:
                 return GestureFrame(tuple(actions), "Zoom complete · release both pinches", True, left is not None, False)
             self._zoom_mode = False
@@ -458,7 +641,7 @@ class GestureEngine:
             self._index_pinched = index_now
             self._left_index_pinched = left_index_now
             self._middle_pinched = middle_now
-            self._pointer_resume_at = timestamp + 0.1
+            self._pointer_resume_at = timestamp + self.tuning["gesture_settle_delay"]
             return GestureFrame(tuple(actions), "Zoom pose · keep other three fingers open", True, True, False)
 
         # A left fist reserves the right index pinch for vertical scrolling.
@@ -473,13 +656,13 @@ class GestureEngine:
             self._middle_pinched = middle_now
             self._volume_y = None
             if index_now or self._index_pinched:
-                self._pointer_resume_at = timestamp + 0.1
+                self._pointer_resume_at = timestamp + self.tuning["gesture_settle_delay"]
             if index_now:
                 current_y = points[8].y
                 if self._scroll_y is None:
                     self._scroll_y = current_y
                 else:
-                    step = 0.026 / self.sensitivity
+                    step = self.tuning["scroll_step"] / self.sensitivity
                     delta = self._scroll_y - current_y
                     amount = int(delta / step)
                     if amount:
@@ -495,7 +678,7 @@ class GestureEngine:
             return GestureFrame(tuple(actions), gesture, True, True, False)
 
         # Open left palm reserves index pinch for volume and prevents a left click.
-        if left_open:
+        if left_open and (index_now or self._index_pinched):
             if self._dragging:
                 actions.append(GestureAction("left_up"))
                 self._dragging = False
@@ -505,13 +688,13 @@ class GestureEngine:
                 actions.append(GestureAction("pinch_cancel"))
             self._middle_pinched = middle_now
             if index_now or self._index_pinched:
-                self._pointer_resume_at = timestamp + 0.1
+                self._pointer_resume_at = timestamp + self.tuning["gesture_settle_delay"]
             if index_now:
                 current_y = points[8].y
                 if self._volume_y is None:
                     self._volume_y = current_y
                 else:
-                    step = 0.027 / self.sensitivity
+                    step = self.tuning["volume_step"] / self.sensitivity
                     delta = self._volume_y - current_y
                     amount = int(delta / step)
                     if amount:
@@ -542,28 +725,37 @@ class GestureEngine:
             self._left_index_pinched = left_index_now
             self._volume_y = None
             self._scroll_y = None
-            self._pointer_resume_at = timestamp + 0.1
+            self._pointer_resume_at = timestamp + self.tuning["gesture_settle_delay"]
+            current_x = (points[8].x + points[12].x) * 0.5
             current_y = (points[8].y + points[12].y) * 0.5
-            if self._two_finger_scroll_y is None:
+            if self._two_finger_scroll_y is None or self._two_finger_scroll_x is None:
+                self._two_finger_scroll_x = current_x
                 self._two_finger_scroll_y = current_y
                 self._two_finger_scroll_last_emit = timestamp
             else:
-                delta = self._two_finger_scroll_y - current_y
-                dead_zone = 0.024 / self.sensitivity
+                horizontal_delta = current_x - self._two_finger_scroll_x
+                vertical_delta = self._two_finger_scroll_y - current_y
+                horizontal = abs(horizontal_delta) > abs(vertical_delta)
+                delta = horizontal_delta if horizontal else vertical_delta
+                dead_zone = self.tuning["two_finger_dead_zone"] / self.sensitivity
                 if abs(delta) < dead_zone:
                     # Slowly follow harmless drift while the hand is centered.
+                    self._two_finger_scroll_x = self._two_finger_scroll_x * 0.92 + current_x * 0.08
                     self._two_finger_scroll_y = self._two_finger_scroll_y * 0.92 + current_y * 0.08
                 else:
                     strength = min(3, 1 + int((abs(delta) - dead_zone) / 0.035))
                     interval = {1: 0.11, 2: 0.085, 3: 0.065}[strength]
                     if timestamp - self._two_finger_scroll_last_emit >= interval:
                         direction = 1 if delta > 0 else -1
-                        actions.append(GestureAction("scroll", amount=direction * strength))
+                        actions.append(GestureAction("scroll_horizontal" if horizontal else "scroll", amount=direction * strength))
                         self._two_finger_scroll_last_emit = timestamp
-            if actions and actions[-1].kind == "scroll":
-                gesture = "Two-finger scroll up" if actions[-1].amount > 0 else "Two-finger scroll down"
+            if actions and actions[-1].kind in ("scroll", "scroll_horizontal"):
+                if actions[-1].kind == "scroll_horizontal":
+                    gesture = "Two-finger scroll right" if actions[-1].amount > 0 else "Two-finger scroll left"
+                else:
+                    gesture = "Two-finger scroll up" if actions[-1].amount > 0 else "Two-finger scroll down"
             else:
-                gesture = "Two-finger scroll · move vertically"
+                gesture = "Two-finger scroll · move in any direction"
             return GestureFrame(tuple(actions), gesture, True, left is not None, False)
 
         self._volume_y = None
@@ -582,12 +774,12 @@ class GestureEngine:
         if index_now and not was_index_pinched and not middle_now:
             self._pinch_drag_filter.reset()
 
-        if middle_now and not was_middle_pinched and not index_now and timestamp - self._last_right_click > 0.32:
+        if middle_now and not was_middle_pinched and not index_now and timestamp - self._last_right_click > self.tuning["right_click_cooldown"]:
             actions.append(GestureAction("right_click"))
             self._last_right_click = timestamp
 
         if index_now and not was_index_pinched and not middle_now:
-            if timestamp - self._last_index_release <= 0.5:
+            if timestamp - self._last_index_release <= self.tuning["double_click_window"]:
                 self._dragging = True
                 self._drag_start_point = (points[8].x, points[8].y)
                 self._drag_started_at = timestamp
@@ -599,7 +791,7 @@ class GestureEngine:
         elif not index_now and was_index_pinched:
             if self._dragging:
                 actions.append(GestureAction("left_up"))
-                completed_double_click = not self._drag_moved and timestamp - self._drag_started_at <= 0.5
+                completed_double_click = not self._drag_moved and timestamp - self._drag_started_at <= self.tuning["double_click_window"]
                 self._dragging = False
                 self._drag_start_point = None
                 self._drag_moved = False
@@ -609,7 +801,7 @@ class GestureEngine:
 
         pinch_released = (was_index_pinched and not index_now) or (was_middle_pinched and not middle_now)
         if pinch_released:
-            self._pointer_resume_at = timestamp + 0.085
+            self._pointer_resume_at = timestamp + self.tuning["click_settle_delay"]
 
         drag_started = self._dragging and not dragging_before
         if self._dragging and index_now and not drag_started:
@@ -618,7 +810,7 @@ class GestureEngine:
                     points[8].x - self._drag_start_point[0],
                     points[8].y - self._drag_start_point[1],
                 )
-                self._drag_moved = travel >= 0.018
+                self._drag_moved = travel >= self.tuning["drag_start_distance"]
             drag_point = Landmark(
                 points[8].x + self._pinch_offset[0],
                 points[8].y + self._pinch_offset[1],
@@ -637,7 +829,22 @@ class GestureEngine:
             pointer_x, pointer_y = self._map_pointer(drag_point, timestamp, self._pinch_drag_filter)
             actions.append(GestureAction("pinch_move", pointer_x, pointer_y))
         elif not index_now and not middle_now and not was_index_pinched and not was_middle_pinched and timestamp >= self._pointer_resume_at:
-            pointer_x, pointer_y = self._map_pointer(points[8], timestamp)
+            # Graduated slowdown: the pointer decelerates linearly as the
+            # finger approaches the pinch contact threshold. This keeps
+            # normal navigation quick while making small targets easier to
+            # acquire just before the click is committed.
+            precision_factor = 0.0
+            if self.tuning["precision_enabled"] >= 0.5 and index_ratio < self.tuning["precision_ratio"]:
+                outer = self.tuning["precision_ratio"]
+                inner = self.tuning["pinch_contact"]
+                span = outer - inner
+                if span > 0.01:
+                    # 1.0 at the contact edge, 0.0 at the outer boundary.
+                    proximity = max(0.0, min(1.0, (outer - index_ratio) / span))
+                    precision_factor = proximity
+                else:
+                    precision_factor = 1.0
+            pointer_x, pointer_y = self._map_pointer(points[8], timestamp, precision_factor=precision_factor)
             actions.append(GestureAction("move", pointer_x, pointer_y))
             self._last_pointer_point = points[8]
             self._pinch_offset = (0.0, 0.0)
@@ -656,6 +863,8 @@ class GestureEngine:
             gesture = "Pointer locked · right click"
         elif timestamp < self._pointer_resume_at:
             gesture = "Pointer settling"
+        elif swipe_debug:
+            gesture = swipe_debug
         else:
             gesture = "Pointer tracking"
         return GestureFrame(tuple(actions), gesture, True, left is not None, False)

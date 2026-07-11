@@ -42,6 +42,20 @@ def index_pinched_with_free_fingers_folded(handedness, dx=0.0):
     return with_point(hand, 8, thumb.x + 0.01, thumb.y)
 
 
+def index_released_with_free_fingers_folded(handedness, dx=0.0):
+    closed = shift_hand(fist(handedness), dx=dx)
+    opened = shift_hand(open_hand(handedness), dx=dx)
+    points = list(closed.landmarks)
+    points[5:9] = opened.landmarks[5:9]
+    return HandObservation(handedness, tuple(points))
+
+
+def middle_pinched_with_other_fingers_folded(handedness, dx=0.0):
+    hand = shift_hand(fist(handedness), dx=dx)
+    thumb = hand.landmarks[4]
+    return with_point(hand, 12, thumb.x + 0.01, thumb.y)
+
+
 def index_pinched_with_one_free_finger_folded(handedness, dx=0.0):
     pinched = index_pinched_hand(handedness, dx=dx)
     folded = shift_hand(fist(handedness), dx=dx)
@@ -91,6 +105,19 @@ def two_finger_hand(handedness="Right"):
     return HandObservation(handedness, tuple(points))
 
 
+def three_finger_swipe_hand(handedness="Left", dx=0.0, dy=0.0):
+    hand = open_hand(handedness)
+    points = list(hand.landmarks)
+    points[4] = Landmark(0.45, 0.79)
+    points[18] = Landmark(0.66, 0.74)
+    points[19] = Landmark(0.67, 0.77)
+    points[20] = Landmark(0.66, 0.80)
+    for index in range(len(points)):
+        point = points[index]
+        points[index] = Landmark(point.x + dx, point.y + dy, point.z)
+    return HandObservation(handedness, tuple(points))
+
+
 def action_kinds(frame):
     return [action.kind for action in frame.actions]
 
@@ -103,6 +130,25 @@ class GestureEngineTests(unittest.TestCase):
     def test_pointer_moves_with_right_hand(self):
         frame = self.engine.process((open_hand(),), 1.0)
         self.assertIn("move", action_kinds(frame))
+
+    def test_enabled_support_three_finger_swipe_switches_application_without_pointer_suppression(self):
+        self.engine.configure(1.0, (0, 0, 1920, 1080), tuning={"swipe_enabled": 1.0})
+        dominant = open_hand("Right")
+        self.engine.process((dominant, three_finger_swipe_hand(dx=0.0)), 1.00)
+        self.engine.process((dominant, three_finger_swipe_hand(dx=0.01)), 1.03)
+        self.engine.process((dominant, three_finger_swipe_hand(dx=0.02)), 1.06)
+        tracking = self.engine.process((dominant, three_finger_swipe_hand(dx=0.07)), 1.09)
+        fired = self.engine.process((dominant, three_finger_swipe_hand(dx=0.15)), 1.12)
+        self.assertIn("move", action_kinds(tracking))
+        self.assertIn("app_next", action_kinds(fired))
+        self.assertNotIn("move", action_kinds(fired))
+
+    def test_dominant_three_finger_swipe_switches_applications(self):
+        self.engine.configure(1.0, (0, 0, 1920, 1080), tuning={"swipe_enabled": 1.0})
+        for timestamp, dx in ((1.00, 0.0), (1.03, 0.01), (1.06, 0.02), (1.09, 0.07)):
+            self.engine.process((three_finger_swipe_hand("Right", dx=dx),), timestamp)
+        frame = self.engine.process((three_finger_swipe_hand("Right", dx=0.15),), 1.12)
+        self.assertIn("app_next", action_kinds(frame))
 
     def test_pointer_reaches_screen_edges_from_compact_hand_workspace(self):
         right_edge = GestureEngine()
@@ -124,6 +170,19 @@ class GestureEngineTests(unittest.TestCase):
         self.assertNotIn("move", action_kinds(first))
         self.assertNotIn("right_click", action_kinds(held))
         self.assertNotIn("move", action_kinds(held))
+
+    def test_middle_thumb_contact_in_a_closed_hand_never_right_clicks(self):
+        closed_contact = middle_pinched_with_other_fingers_folded("Right")
+        frame = self.engine.process((closed_contact,), 1.0)
+        self.assertNotIn("right_click", action_kinds(frame))
+
+    def test_closed_finger_index_pinch_still_left_clicks(self):
+        pinched = index_pinched_with_free_fingers_folded("Right")
+        released = index_released_with_free_fingers_folded("Right")
+        contact = self.engine.process((pinched,), 1.0)
+        clicked = self.engine.process((released,), 1.1)
+        self.assertIn("pinch_start", action_kinds(contact))
+        self.assertIn("left_click", action_kinds(clicked))
 
     def test_index_pinch_release_left_clicks(self):
         hand = open_hand()
@@ -147,6 +206,31 @@ class GestureEngineTests(unittest.TestCase):
         frame = self.engine.process((edge_on,), 1.0)
         self.assertIn("pinch_start", action_kinds(frame))
 
+    def test_3d_depth_separation_rejects_a_projected_edge_on_false_pinch(self):
+        self.engine.configure(
+            1.0,
+            (0, 0, 1920, 1080),
+            tuning={"pinch_3d_blend": 0.45},
+        )
+        hand = open_hand("Right")
+        thumb = hand.landmarks[4]
+        image_points = list(hand.landmarks)
+        image_points[8] = Landmark(thumb.x, thumb.y)
+        world_points = list(hand.landmarks)
+        world_points[8] = Landmark(thumb.x, thumb.y, 0.40)
+        projected_overlap = HandObservation("Right", tuple(image_points), tuple(world_points))
+        self.assertGreater(self.engine._pinch_ratio(projected_overlap, 8), self.engine.tuning["pinch_contact"])
+
+    def test_3d_hybrid_keeps_a_real_front_facing_pinch_responsive(self):
+        hand = open_hand("Right")
+        thumb = hand.landmarks[4]
+        image_points = list(hand.landmarks)
+        image_points[8] = Landmark(thumb.x, thumb.y)
+        world_points = list(hand.landmarks)
+        world_points[8] = Landmark(thumb.x, thumb.y, 0.01)
+        real_contact = HandObservation("Right", tuple(image_points), tuple(world_points))
+        self.assertLess(self.engine._pinch_ratio(real_contact, 8), self.engine.tuning["pinch_contact"])
+
     def test_borderline_pinch_requires_brief_stable_confirmation(self):
         hand = open_hand("Right")
         thumb = hand.landmarks[4]
@@ -167,6 +251,16 @@ class GestureEngineTests(unittest.TestCase):
             self.engine.process((inside,), 1.08),
         )
         self.assertFalse(any("pinch_start" in action_kinds(frame) for frame in frames))
+
+    def test_single_pinch_distance_outlier_is_rejected_after_signal_warmup(self):
+        hand = open_hand("Right")
+        thumb = hand.landmarks[4]
+        open_ratio = with_point(hand, 8, thumb.x + 0.11, thumb.y)
+        outlier = with_point(hand, 8, thumb.x + 0.01, thumb.y)
+        self.engine.process((open_ratio,), 1.0)
+        self.engine.process((open_ratio,), 1.04)
+        spike = self.engine.process((outlier,), 1.08)
+        self.assertNotIn("pinch_start", action_kinds(spike))
 
     def test_held_pinch_survives_landmark_jitter_and_releases_cleanly(self):
         hand = open_hand("Right")
@@ -201,8 +295,8 @@ class GestureEngineTests(unittest.TestCase):
         self.engine.process((hand,), 0.8)
         self.engine.process((pinched,), 1.0)
         released = self.engine.process((hand,), 1.1)
-        settling = self.engine.process((hand,), 1.184)
-        resumed = self.engine.process((hand,), 1.186)
+        settling = self.engine.process((hand,), 1.149)
+        resumed = self.engine.process((hand,), 1.151)
         self.assertNotIn("move", action_kinds(released))
         self.assertNotIn("move", action_kinds(settling))
         self.assertIn("move", action_kinds(resumed))
@@ -484,6 +578,20 @@ class GestureEngineTests(unittest.TestCase):
         self.assertIn("pinch_start", action_kinds(contact))
         self.assertIn("left_click", action_kinds(released))
 
+    def test_left_handed_mode_keeps_closed_index_click_and_guards_right_click(self):
+        self.engine.configure(1.0, (0, 0, 1920, 1080), left_handed=True)
+        pinched = index_pinched_with_free_fingers_folded("Left")
+        released = index_released_with_free_fingers_folded("Left")
+        contact = self.engine.process((pinched,), 1.0)
+        clicked = self.engine.process((released,), 1.1)
+        self.assertIn("pinch_start", action_kinds(contact))
+        self.assertIn("left_click", action_kinds(clicked))
+
+        self.engine.reset()
+        closed_middle_contact = middle_pinched_with_other_fingers_folded("Left")
+        right_click = self.engine.process((closed_middle_contact,), 2.0)
+        self.assertNotIn("right_click", action_kinds(right_click))
+
     def test_left_handed_mode_mirrors_support_hand_scroll(self):
         self.engine.configure(1.0, (0, 0, 1920, 1080), left_handed=True)
         left = index_pinched_hand("Left")
@@ -500,6 +608,14 @@ class GestureEngineTests(unittest.TestCase):
         self.engine.process((hand,), 1.0)
         moved = self.engine.process((shift_hand(hand, dy=-0.08),), 1.1)
         self.assertIn("scroll", action_kinds(moved))
+
+    def test_two_finger_pose_scrolls_horizontally(self):
+        hand = two_finger_hand("Right")
+        self.engine.process((hand,), 1.0)
+        moved = self.engine.process((shift_hand(hand, dx=0.08),), 1.12)
+        horizontal = [action for action in moved.actions if action.kind == "scroll_horizontal"]
+        self.assertEqual(len(horizontal), 1)
+        self.assertGreater(horizontal[0].amount, 0)
 
     def test_left_handed_mode_mirrors_volume_and_right_click(self):
         self.engine.configure(1.0, (0, 0, 1920, 1080), left_handed=True)
@@ -541,14 +657,35 @@ class GestureEngineTests(unittest.TestCase):
         frame = self.engine.process((moved, fist_with_one_finger_tracking_open("Left")), 1.1)
         self.assertIn("scroll", action_kinds(frame))
 
-    def test_fist_hold_toggles_pause(self):
-        closed = fist()
+    def test_single_fist_does_not_pause_control(self):
+        closed = fist("Right")
         self.engine.process((closed,), 1.0)
-        paused = self.engine.process((closed,), 1.75)
-        held = self.engine.process((closed,), 2.0)
+        frame = self.engine.process((closed,), 1.75)
+        self.assertNotIn("pause_changed", action_kinds(frame))
+        self.assertFalse(frame.paused)
+        self.assertEqual(frame.gesture, "Show both fists to pause")
+
+    def test_both_fists_pause_and_active_fist_resumes(self):
+        right = fist("Right")
+        left = fist("Left")
+        self.engine.process((right, left), 1.0)
+        paused = self.engine.process((right, left), 1.75)
+        held = self.engine.process((right, left), 2.0)
         self.assertIn("pause_changed", action_kinds(paused))
         self.assertTrue(paused.paused)
         self.assertNotIn("pause_changed", action_kinds(held))
+        self.engine.process((open_hand("Right"), open_hand("Left")), 2.1)
+        self.engine.process((right, open_hand("Left")), 2.2)
+        resumed = self.engine.process((right, open_hand("Left")), 2.95)
+        self.assertIn("pause_changed", action_kinds(resumed))
+        self.assertFalse(resumed.paused)
+
+    def test_paused_support_hand_fist_does_not_resume_control(self):
+        self.engine.set_paused(True)
+        self.engine.process((open_hand("Right"), fist("Left")), 1.0)
+        still_paused = self.engine.process((open_hand("Right"), fist("Left")), 1.8)
+        self.assertNotIn("pause_changed", action_kinds(still_paused))
+        self.assertTrue(still_paused.paused)
 
     def test_lost_hand_releases_active_drag(self):
         hand = open_hand()
