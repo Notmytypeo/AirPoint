@@ -26,6 +26,6 @@ $Main = Join-Path $Root "main.py"
 if ($Minimized) {
     & $Python $Main --minimized
 } else {
-    & $Python $Main
+    & $Python $Main --maximized
 }
 exit $LASTEXITCODE

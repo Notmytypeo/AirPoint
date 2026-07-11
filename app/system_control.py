@@ -114,6 +114,11 @@ class InputController:
     VK_VOLUME_DOWN = 0xAE
     VK_VOLUME_UP = 0xAF
     VK_CONTROL = 0x11
+    VK_MENU = 0x12
+    VK_LWIN = 0x5B
+    VK_D = 0x44
+    VK_SHIFT = 0x10
+    VK_TAB = 0x09
 
     def __init__(self) -> None:
         if platform.system() != "Windows":
@@ -192,7 +197,7 @@ class InputController:
                         auto.ControlType.ThumbControl,
                     ):
                         rectangle = control.BoundingRectangle
-                        if rectangle.width <= 0 or rectangle.height <= 0:
+                        if rectangle.width() <= 0 or rectangle.height() <= 0:
                             return None
                         orientation = control.Orientation
                         if orientation == auto.OrientationType.Horizontal:
@@ -200,13 +205,12 @@ class InputController:
                         elif orientation == auto.OrientationType.Vertical:
                             axis = "vertical"
                         else:
-                            axis = "horizontal" if rectangle.width >= rectangle.height else "vertical"
+                            axis = "horizontal" if rectangle.width() >= rectangle.height() else "vertical"
                         return axis, (rectangle.left, rectangle.top, rectangle.right, rectangle.bottom)
                     control = control.GetParentControl()
-                return self._detect_msaa_axis(x, y)
         except Exception:
-            return None
-        return None
+            pass
+        return self._detect_msaa_axis(x, y)
 
     @staticmethod
     def _detect_msaa_axis(x: int, y: int) -> tuple[str, tuple[int, int, int, int]] | None:
@@ -298,6 +302,16 @@ class InputController:
         for _ in range(abs(amount)):
             self._mouse(self.MOUSEEVENTF_WHEEL, mouse_data=wheel_delta)
 
+    def scroll_horizontal(self, amount: int) -> None:
+        """Horizontal wheel emulation for Windows controls that support Shift+wheel."""
+        wheel_delta = -120 if amount > 0 else 120
+        self._key(self.VK_SHIFT)
+        try:
+            for _ in range(abs(amount)):
+                self._mouse(self.MOUSEEVENTF_WHEEL, mouse_data=wheel_delta)
+        finally:
+            self._key(self.VK_SHIFT, key_up=True)
+
     def zoom(self, amount: int) -> None:
         wheel_delta = 120 if amount > 0 else -120
         self._key(self.VK_CONTROL)
@@ -306,6 +320,42 @@ class InputController:
                 self._mouse(self.MOUSEEVENTF_WHEEL, mouse_data=wheel_delta)
         finally:
             self._key(self.VK_CONTROL, key_up=True)
+
+    def switch_application(self, direction: int) -> None:
+        """Platform seam for application switching; Windows uses Alt+Tab.
+
+        Positive direction is next application (Alt+Tab); negative is previous
+        application (Alt+Shift+Tab). A Linux implementation can replace only this method
+        with xdotool/uinput without touching gesture detection.
+        """
+        self._key(self.VK_MENU)
+        if direction < 0:
+            self._key(self.VK_SHIFT)
+        try:
+            self._key(self.VK_TAB)
+            self._key(self.VK_TAB, key_up=True)
+        finally:
+            if direction < 0:
+                self._key(self.VK_SHIFT, key_up=True)
+            self._key(self.VK_MENU, key_up=True)
+
+    def task_view(self) -> None:
+        """Open Windows Task View (Win+Tab)."""
+        self._key(self.VK_LWIN)
+        try:
+            self._key(self.VK_TAB)
+            self._key(self.VK_TAB, key_up=True)
+        finally:
+            self._key(self.VK_LWIN, key_up=True)
+
+    def show_desktop(self) -> None:
+        """Toggle the Windows desktop (Win+D)."""
+        self._key(self.VK_LWIN)
+        try:
+            self._key(self.VK_D)
+            self._key(self.VK_D, key_up=True)
+        finally:
+            self._key(self.VK_LWIN, key_up=True)
 
     def release_all(self) -> None:
         self.cancel_context_pinch()

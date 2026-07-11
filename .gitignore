@@ -9,3 +9,5 @@ dist/
 build/
 *.spec
 @AutomationLog.txt
+.mypy_cache/
+installer_output/
