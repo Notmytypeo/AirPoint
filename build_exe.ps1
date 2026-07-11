@@ -7,9 +7,15 @@ $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Venv = Join-Path $Root ".venv"
 $Python = Join-Path $Venv "Scripts\python.exe"
 $Pip = Join-Path $Venv "Scripts\pip.exe"
+$Spec = Join-Path $Root "AirPoint.spec"
 
 if (-not (Test-Path $Python)) {
     Write-Error ".venv not found. Run '.\run.ps1' once first to create the virtual environment."
+    exit 1
+}
+
+if (-not (Test-Path $Spec)) {
+    Write-Error "AirPoint.spec is missing. Restore the tracked build specification before building."
     exit 1
 }
 
@@ -35,7 +41,7 @@ Write-Host "   Building AirPoint standalone executable...      " -ForegroundColo
 Write-Host "==================================================" -ForegroundColor Cyan
 
 # Run PyInstaller with the spec file
-& $Python -m PyInstaller --clean --noconfirm (Join-Path $Root "AirPoint.spec")
+& $Python -m PyInstaller --clean --noconfirm $Spec
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "PyInstaller build failed! ❌"

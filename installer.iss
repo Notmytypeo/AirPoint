@@ -10,7 +10,7 @@
 #define MyAppDescription "Gesture-controlled mouse and system controls using hand tracking"
 
 [Setup]
-AppId={{A1RP01NT-GEST-CTRL-APP0-000000000001}
+AppId={{8F0E46B5-3C5A-4D2E-B0BE-AE1C0B6C0001}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}

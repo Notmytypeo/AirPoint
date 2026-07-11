@@ -53,7 +53,18 @@ Run this once from PowerShell:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-Startup.ps1"
 ```
 
-AirPoint will start minimized after Windows sign-in. Its PowerShell terminal remains visible as a minimized taskbar window while gesture tracking runs, and closes when AirPoint exits. To remove it from startup, run the same command with `-Remove`.
+AirPoint starts maximized after Windows sign-in, with PowerShell hidden. To remove it from startup, run the same command with `-Remove`.
+
+## Build a standalone Windows installer
+
+Build the PyInstaller one-folder bundle, then compile `installer.iss` with Inno Setup:
+
+```powershell
+.\build_exe.ps1
+iscc .\installer.iss
+```
+
+The distributable installer is written to `installer_output\AirPoint_Setup_1.0.0.exe`. The tracked `AirPoint.spec` file is required for reproducible builds; generated `build/`, `dist/`, and installer output remain excluded from Git.
 
 ## Accuracy tips
 
