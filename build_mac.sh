@@ -48,8 +48,8 @@ echo "=================================================="
     --distpath "$OUTPUT_DIR" \
     --workpath "$ROOT/build-macos" \
     --specpath "$ROOT/build-macos" \
-    --add-data "models/hand_landmarker.task:models" \
-    --add-data "app/assets:app/assets" \
+    --add-data "$ROOT/models/hand_landmarker.task:models" \
+    --add-data "$ROOT/app/assets:app/assets" \
     --add-data "$MEDIAPIPE_DIR:mediapipe" \
     --hidden-import "mediapipe" \
     --hidden-import "mediapipe.tasks" \
@@ -72,7 +72,7 @@ echo "=================================================="
     --exclude-module "pandas" \
     --exclude-module "IPython" \
     --exclude-module "jupyter" \
-    main.py
+    "$ROOT/main.py"
 
 # ditto preserves the macOS bundle metadata that a regular zip command can lose.
 ditto -c -k --sequesterRsrc --keepParent \
