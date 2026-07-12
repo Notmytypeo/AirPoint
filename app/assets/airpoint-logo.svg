@@ -1,21 +1,20 @@
 <svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="background" x1="32" y1="20" x2="224" y2="238" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#65D7FF"/>
-      <stop offset="0.46" stop-color="#387BFF"/>
-      <stop offset="1" stop-color="#1B3197"/>
+    <linearGradient id="background" x1="34" y1="24" x2="222" y2="232" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5FD6FF"/>
+      <stop offset="0.48" stop-color="#3478F6"/>
+      <stop offset="1" stop-color="#203C9F"/>
     </linearGradient>
-    <linearGradient id="pointer" x1="96" y1="67" x2="167" y2="198" gradientUnits="userSpaceOnUse">
-      <stop stop-color="white"/>
-      <stop offset="1" stop-color="#D7EAFF"/>
+    <linearGradient id="pointer" x1="80" y1="62" x2="160" y2="208" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DCEBFF"/>
     </linearGradient>
-    <filter id="shadow" x="45" y="36" width="170" height="192" filterUnits="userSpaceOnUse">
-      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#08165B" flood-opacity="0.38"/>
+    <filter id="shadow" x="45" y="35" width="170" height="190" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="7" stdDeviation="7" flood-color="#102666" flood-opacity="0.36"/>
     </filter>
   </defs>
-  <rect x="12" y="12" width="232" height="232" rx="64" fill="url(#background)"/>
-  <path d="M55 53C55 42.5 67.2 36.7 75.4 43.3L202.5 145.6C211.8 153.1 207.9 168.1 196.3 170.2L149.3 178.7L173.7 215.8C178.7 223.3 176.6 233.4 169.1 238.4L151.6 250C144.1 255 134 252.9 129 245.4L104.3 207.9L75.3 241.8C67.8 250.5 53 245.2 53 233.5L55 53Z" fill="url(#pointer)" filter="url(#shadow)"/>
-  <path d="M55 53C55 42.5 67.2 36.7 75.4 43.3L202.5 145.6C211.8 153.1 207.9 168.1 196.3 170.2L149.3 178.7L173.7 215.8C178.7 223.3 176.6 233.4 169.1 238.4L151.6 250C144.1 255 134 252.9 129 245.4L104.3 207.9L75.3 241.8C67.8 250.5 53 245.2 53 233.5L55 53Z" stroke="#F4FBFF" stroke-width="8" stroke-linejoin="round"/>
-  <circle cx="196" cy="60" r="19" fill="#C5F5FF" fill-opacity="0.92"/>
-  <circle cx="196" cy="60" r="8" fill="#2363DD"/>
+  <rect x="16" y="16" width="224" height="224" rx="58" fill="url(#background)"/>
+  <rect x="17" y="17" width="222" height="222" rx="57" stroke="#9AE8FF" stroke-opacity="0.52" stroke-width="2"/>
+  <path d="M72 54C65.4 49.1 56 54.1 56.4 62.3L64.1 207.4C64.7 218.1 78.2 222.4 84.8 213.8L111.2 179.3L137.5 219.4C141.1 224.9 148.5 226.4 154 222.8L169.1 212.8C174.6 209.2 176.1 201.8 172.5 196.3L146 156L191.6 148.4C202.6 146.6 206.4 132.6 197.7 125.6L72 54Z" fill="url(#pointer)" filter="url(#shadow)"/>
+  <path d="M72 54C65.4 49.1 56 54.1 56.4 62.3L64.1 207.4C64.7 218.1 78.2 222.4 84.8 213.8L111.2 179.3L137.5 219.4C141.1 224.9 148.5 226.4 154 222.8L169.1 212.8C174.6 209.2 176.1 201.8 172.5 196.3L146 156L191.6 148.4C202.6 146.6 206.4 132.6 197.7 125.6L72 54Z" stroke="#F7FCFF" stroke-width="7" stroke-linejoin="round"/>
 </svg>
