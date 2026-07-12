@@ -88,6 +88,7 @@ class PointFilter:
         self.confidence_floor = max(0.0, min(0.95, confidence_floor))
         self.jump_threshold = max(0.01, jump_threshold)
         self._last_base: tuple[float, float] | None = None
+        self._last_output: tuple[float, float] | None = None
         self._last_time: float | None = None
         self._velocity = (0.0, 0.0)
         self._last_measurement: tuple[float, float] | None = None
@@ -176,6 +177,7 @@ class PointFilter:
             self._last_base = filtered
             self._last_time = timestamp
             self._last_measurement = measurement
+            self._last_output = filtered
             return filtered
 
         assert self._last_measurement is not None
@@ -210,7 +212,8 @@ class PointFilter:
         if distance <= self.dead_zone:
             self._velocity = (self._velocity[0] * 0.45, self._velocity[1] * 0.45)
             self._last_time = timestamp
-            return self._last_base
+            self._last_output = self._last_base
+            return self._last_output
 
         movement = (distance - self.dead_zone) / distance
         base = (
@@ -232,10 +235,11 @@ class PointFilter:
         predicted_dy = max(-self.prediction_cap, min(self.prediction_cap, self._velocity[1] * lookahead))
         self._last_base = base
         self._last_time = timestamp
-        return (
+        self._last_output = (
             max(0.0, min(1.0, base[0] + predicted_dx)),
             max(0.0, min(1.0, base[1] + predicted_dy)),
         )
+        return self._last_output
 
     def reanchor(self, x: float, y: float, timestamp: float) -> None:
         """Keep the current cursor position while rebasing to a new hand pose.
@@ -245,13 +249,14 @@ class PointFilter:
         makes the cursor jump. Re-anchoring turns the difference into a local
         clutch offset, so only movement *after* release moves the pointer.
         """
-        target = self._last_base if self._last_base is not None else (x, y)
+        target = self._last_output or self._last_base or (x, y)
         self._input_offset = (x - target[0], y - target[1])
         self.x.reset()
         self.y.reset()
         self.x(target[0], timestamp)
         self.y(target[1], timestamp)
         self._last_base = target
+        self._last_output = target
         self._last_time = timestamp
         self._last_measurement = target
         self._measurement_velocity = (0.0, 0.0)
@@ -262,6 +267,7 @@ class PointFilter:
         self.x.reset()
         self.y.reset()
         self._last_base = None
+        self._last_output = None
         self._last_time = None
         self._velocity = (0.0, 0.0)
         self._last_measurement = None

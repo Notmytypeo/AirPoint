@@ -174,6 +174,7 @@ class GestureEngine:
         self._two_finger_scroll_last_emit = -10.0
         self._pointer_resume_at = -10.0
         self._pointer_reanchor_pending = False
+        self._precision_tracking = False
         self._last_pointer_point: Landmark | None = None
         self._pinch_offset = (0.0, 0.0)
         self._missing_since: float | None = None
@@ -258,6 +259,7 @@ class GestureEngine:
         self._last_pointer_point = None
         self._pinch_offset = (0.0, 0.0)
         self._pointer_reanchor_pending = False
+        self._precision_tracking = False
         self._missing_since = None
         for detector in self._swipes.values():
             detector.reset()
@@ -478,6 +480,7 @@ class GestureEngine:
                 self._pinch_offset = (0.0, 0.0)
                 self._pointer_resume_at = -10.0
                 self._pointer_reanchor_pending = False
+                self._precision_tracking = False
                 self._filter.reset()
                 self._pinch_drag_filter.reset()
             return GestureFrame(tuple(actions), f"Show your {dominant_name.lower()} hand", False, left is not None, self.paused)
@@ -860,6 +863,13 @@ class GestureEngine:
                     precision_factor = proximity
                 else:
                     precision_factor = 1.0
+            precision_active = precision_factor > 0.02
+            if self._precision_tracking and not precision_active:
+                # Leaving the slow final-approach zone can happen without a
+                # fully registered click. Re-anchor here as well, otherwise
+                # the cursor catches up to the fingertip's released position.
+                self._pointer_reanchor_pending = True
+            self._precision_tracking = precision_active
             pointer_x, pointer_y = self._map_pointer(
                 points[8],
                 timestamp,
@@ -871,6 +881,10 @@ class GestureEngine:
             actions.append(GestureAction("move", pointer_x, pointer_y))
             self._last_pointer_point = points[8]
             self._pinch_offset = (0.0, 0.0)
+        elif index_now or middle_now:
+            # Pointer motion is locked during a pinch; retain the precision
+            # state until the release frame can decide whether to re-anchor.
+            pass
 
         self._index_pinched = index_now
         self._middle_pinched = middle_now
