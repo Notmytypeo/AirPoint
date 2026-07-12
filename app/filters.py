@@ -88,13 +88,13 @@ class PointFilter:
         self.confidence_floor = max(0.0, min(0.95, confidence_floor))
         self.jump_threshold = max(0.01, jump_threshold)
         self._last_base: tuple[float, float] | None = None
-        self._last_output: tuple[float, float] | None = None
         self._last_time: float | None = None
         self._velocity = (0.0, 0.0)
         self._last_measurement: tuple[float, float] | None = None
         self._measurement_velocity = (0.0, 0.0)
         self._rejected_measurement: tuple[float, float] | None = None
-        self._input_offset = (0.0, 0.0)
+        self._precision_memory = 0.0
+        self._precision_time: float | None = None
 
     def configure(
         self,
@@ -138,7 +138,7 @@ class PointFilter:
         large innovation is rejected. A second movement in the same direction
         is accepted so deliberate fast pointer motion remains responsive.
         """
-        measurement = (x - self._input_offset[0], y - self._input_offset[1])
+        measurement = (x, y)
         confidence_enabled = confidence is not None
         quality = 1.0 if confidence is None else max(0.0, min(1.0, confidence))
         if self._last_measurement is not None:
@@ -177,7 +177,6 @@ class PointFilter:
             self._last_base = filtered
             self._last_time = timestamp
             self._last_measurement = measurement
-            self._last_output = filtered
             return filtered
 
         assert self._last_measurement is not None
@@ -194,6 +193,16 @@ class PointFilter:
         dx = filtered[0] - self._last_base[0]
         dy = filtered[1] - self._last_base[1]
         distance = math.hypot(dx, dy)
+        # Fade precision mode out instead of removing the speed cap in one
+        # frame. This prevents a separated fingertip from making the cursor
+        # abruptly catch up after the controlled final approach.
+        elapsed = 0.0 if self._precision_time is None else max(0.0, min(0.05, timestamp - self._precision_time))
+        self._precision_time = timestamp
+        if precision_factor >= self._precision_memory:
+            self._precision_memory = precision_factor
+        else:
+            self._precision_memory = max(precision_factor, self._precision_memory - elapsed / 0.16)
+        precision_factor = self._precision_memory
         precision_active = precision_factor > 0.0
         if precision_active and distance > 0.0:
             # Graduated cap: full precision_step at factor=0, down to the
@@ -212,8 +221,7 @@ class PointFilter:
         if distance <= self.dead_zone:
             self._velocity = (self._velocity[0] * 0.45, self._velocity[1] * 0.45)
             self._last_time = timestamp
-            self._last_output = self._last_base
-            return self._last_output
+            return self._last_base
 
         movement = (distance - self.dead_zone) / distance
         base = (
@@ -235,42 +243,19 @@ class PointFilter:
         predicted_dy = max(-self.prediction_cap, min(self.prediction_cap, self._velocity[1] * lookahead))
         self._last_base = base
         self._last_time = timestamp
-        self._last_output = (
+        return (
             max(0.0, min(1.0, base[0] + predicted_dx)),
             max(0.0, min(1.0, base[1] + predicted_dy)),
         )
-        return self._last_output
-
-    def reanchor(self, x: float, y: float, timestamp: float) -> None:
-        """Keep the current cursor position while rebasing to a new hand pose.
-
-        A click pinch naturally changes the fingertip position. When the pinch
-        releases, treating that new pose as the continuation of the old one
-        makes the cursor jump. Re-anchoring turns the difference into a local
-        clutch offset, so only movement *after* release moves the pointer.
-        """
-        target = self._last_output or self._last_base or (x, y)
-        self._input_offset = (x - target[0], y - target[1])
-        self.x.reset()
-        self.y.reset()
-        self.x(target[0], timestamp)
-        self.y(target[1], timestamp)
-        self._last_base = target
-        self._last_output = target
-        self._last_time = timestamp
-        self._last_measurement = target
-        self._measurement_velocity = (0.0, 0.0)
-        self._velocity = (0.0, 0.0)
-        self._rejected_measurement = None
 
     def reset(self) -> None:
         self.x.reset()
         self.y.reset()
         self._last_base = None
-        self._last_output = None
         self._last_time = None
         self._velocity = (0.0, 0.0)
         self._last_measurement = None
         self._measurement_velocity = (0.0, 0.0)
         self._rejected_measurement = None
-        self._input_offset = (0.0, 0.0)
+        self._precision_memory = 0.0
+        self._precision_time = None
