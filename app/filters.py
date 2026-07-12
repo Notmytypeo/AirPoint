@@ -69,6 +69,8 @@ class PointFilter:
         prediction_cap: float = 0.014,
         precision_step: float = 0.012,
         precision_speed_floor: float = 0.55,
+        confidence_floor: float = 0.45,
+        jump_threshold: float = 0.095,
     ) -> None:
         # Lower cutoff stabilizes a resting hand; higher beta quickly opens the
         # filter during intentional motion. The radial dead zone removes the
@@ -83,9 +85,14 @@ class PointFilter:
         self.prediction_cap = max(0.0, prediction_cap)
         self.precision_step = max(0.0, precision_step)
         self.precision_speed_floor = max(0.0, min(1.0, precision_speed_floor))
+        self.confidence_floor = max(0.0, min(0.95, confidence_floor))
+        self.jump_threshold = max(0.01, jump_threshold)
         self._last_base: tuple[float, float] | None = None
         self._last_time: float | None = None
         self._velocity = (0.0, 0.0)
+        self._last_measurement: tuple[float, float] | None = None
+        self._measurement_velocity = (0.0, 0.0)
+        self._rejected_measurement: tuple[float, float] | None = None
 
     def configure(
         self,
@@ -97,6 +104,8 @@ class PointFilter:
         prediction_cap: float,
         precision_step: float,
         precision_speed_floor: float,
+        confidence_floor: float,
+        jump_threshold: float,
     ) -> None:
         self.dead_zone = max(0.0, dead_zone)
         self.lookahead_frames = max(0.0, min(1.0, lookahead_frames))
@@ -105,19 +114,79 @@ class PointFilter:
         self.prediction_cap = max(0.0, prediction_cap)
         self.precision_step = max(0.0, precision_step)
         self.precision_speed_floor = max(0.0, min(1.0, precision_speed_floor))
+        self.confidence_floor = max(0.0, min(0.95, confidence_floor))
+        self.jump_threshold = max(0.01, jump_threshold)
 
-    def apply(self, x: float, y: float, timestamp: float, precision_factor: float = 0.0) -> tuple[float, float]:
+    def apply(
+        self,
+        x: float,
+        y: float,
+        timestamp: float,
+        precision_factor: float = 0.0,
+        confidence: float | None = None,
+    ) -> tuple[float, float]:
         """Apply filtering to pointer coordinates.
 
         precision_factor: 0.0 = normal tracking, 1.0 = maximum slowdown
         (finger is about to make pinch contact).  The effective step cap
         and prediction are scaled continuously between these extremes.
+
+        confidence: MediaPipe hand confidence in the 0–1 range. Low-confidence
+        samples are blended toward the last trusted measurement, while a single
+        large innovation is rejected. A second movement in the same direction
+        is accepted so deliberate fast pointer motion remains responsive.
         """
-        filtered = (self.x(x, timestamp), self.y(y, timestamp))
+        measurement = (x, y)
+        confidence_enabled = confidence is not None
+        quality = 1.0 if confidence is None else max(0.0, min(1.0, confidence))
+        if self._last_measurement is not None:
+            previous = self._last_measurement
+            expected = (
+                previous[0] + self._measurement_velocity[0],
+                previous[1] + self._measurement_velocity[1],
+            )
+            innovation = math.hypot(measurement[0] - expected[0], measurement[1] - expected[1])
+            # High-confidence tracking is allowed a wider movement envelope;
+            # uncertain classification becomes more conservative immediately.
+            jump_limit = self.jump_threshold * (0.65 + 0.35 * quality)
+            consistent_motion = False
+            if self._rejected_measurement is not None:
+                prior_dx = self._rejected_measurement[0] - previous[0]
+                prior_dy = self._rejected_measurement[1] - previous[1]
+                next_dx = measurement[0] - self._rejected_measurement[0]
+                next_dy = measurement[1] - self._rejected_measurement[1]
+                consistent_motion = prior_dx * next_dx + prior_dy * next_dy > 0.0
+            if confidence_enabled and innovation > jump_limit and not consistent_motion:
+                self._rejected_measurement = measurement
+                self._velocity = (self._velocity[0] * 0.55, self._velocity[1] * 0.55)
+                return self._last_base if self._last_base is not None else previous
+            self._rejected_measurement = None
+            if confidence_enabled:
+                span = max(1e-6, 1.0 - self.confidence_floor)
+                normalized_quality = max(0.0, min(1.0, (quality - self.confidence_floor) / span))
+                blend = 0.35 + 0.65 * normalized_quality
+                measurement = (
+                    previous[0] + (measurement[0] - previous[0]) * blend,
+                    previous[1] + (measurement[1] - previous[1]) * blend,
+                )
+
+        filtered = (self.x(measurement[0], timestamp), self.y(measurement[1], timestamp))
         if self._last_base is None:
             self._last_base = filtered
             self._last_time = timestamp
+            self._last_measurement = measurement
             return filtered
+
+        assert self._last_measurement is not None
+        measured_step = (
+            measurement[0] - self._last_measurement[0],
+            measurement[1] - self._last_measurement[1],
+        )
+        self._measurement_velocity = (
+            self._measurement_velocity[0] * 0.45 + measured_step[0] * 0.55,
+            self._measurement_velocity[1] * 0.45 + measured_step[1] * 0.55,
+        )
+        self._last_measurement = measurement
 
         dx = filtered[0] - self._last_base[0]
         dy = filtered[1] - self._last_base[1]
@@ -173,3 +242,6 @@ class PointFilter:
         self._last_base = None
         self._last_time = None
         self._velocity = (0.0, 0.0)
+        self._last_measurement = None
+        self._measurement_velocity = (0.0, 0.0)
+        self._rejected_measurement = None
