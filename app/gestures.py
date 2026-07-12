@@ -173,6 +173,7 @@ class GestureEngine:
         self._two_finger_scroll_x: float | None = None
         self._two_finger_scroll_last_emit = -10.0
         self._pointer_resume_at = -10.0
+        self._pointer_reanchor_pending = False
         self._last_pointer_point: Landmark | None = None
         self._pinch_offset = (0.0, 0.0)
         self._missing_since: float | None = None
@@ -256,6 +257,7 @@ class GestureEngine:
         self._left_fist_last_seen = -10.0
         self._last_pointer_point = None
         self._pinch_offset = (0.0, 0.0)
+        self._pointer_reanchor_pending = False
         self._missing_since = None
         for detector in self._swipes.values():
             detector.reset()
@@ -399,6 +401,7 @@ class GestureEngine:
         motion_filter: PointFilter | None = None,
         precision_factor: float = 0.0,
         confidence: float = 1.0,
+        reanchor: bool = False,
     ) -> tuple[int, int]:
         # The camera frame is mirrored before inference, so x maps naturally.
         # Amplify the central hand workspace so reaching every screen edge does
@@ -410,7 +413,10 @@ class GestureEngine:
         margin_x = margin_y = self.tuning["workspace_margin"]
         nx = max(0.0, min(1.0, (nx - margin_x) / (1.0 - 2 * margin_x)))
         ny = max(0.0, min(1.0, (ny - margin_y) / (1.0 - 2 * margin_y)))
-        sx, sy = (motion_filter or self._filter).apply(
+        active_filter = motion_filter or self._filter
+        if reanchor:
+            active_filter.reanchor(nx, ny, timestamp)
+        sx, sy = active_filter.apply(
             nx, ny, timestamp, precision_factor=precision_factor, confidence=confidence,
         )
         left, top, width, height = self.screen
@@ -471,6 +477,7 @@ class GestureEngine:
                 self._last_pointer_point = None
                 self._pinch_offset = (0.0, 0.0)
                 self._pointer_resume_at = -10.0
+                self._pointer_reanchor_pending = False
                 self._filter.reset()
                 self._pinch_drag_filter.reset()
             return GestureFrame(tuple(actions), f"Show your {dominant_name.lower()} hand", False, left is not None, self.paused)
@@ -808,6 +815,7 @@ class GestureEngine:
         pinch_released = (was_index_pinched and not index_now) or (was_middle_pinched and not middle_now)
         if pinch_released:
             self._pointer_resume_at = timestamp + self.tuning["click_settle_delay"]
+            self._pointer_reanchor_pending = True
 
         drag_started = self._dragging and not dragging_before
         if self._dragging and index_now and not drag_started:
@@ -853,8 +861,13 @@ class GestureEngine:
                 else:
                     precision_factor = 1.0
             pointer_x, pointer_y = self._map_pointer(
-                points[8], timestamp, precision_factor=precision_factor, confidence=right.confidence,
+                points[8],
+                timestamp,
+                precision_factor=precision_factor,
+                confidence=right.confidence,
+                reanchor=self._pointer_reanchor_pending,
             )
+            self._pointer_reanchor_pending = False
             actions.append(GestureAction("move", pointer_x, pointer_y))
             self._last_pointer_point = points[8]
             self._pinch_offset = (0.0, 0.0)
