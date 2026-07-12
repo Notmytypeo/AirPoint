@@ -118,11 +118,12 @@ class PointFilterTests(unittest.TestCase):
     def test_reanchor_keeps_cursor_stable_after_a_pinch_release(self):
         smoothing = PointFilter()
         initial = smoothing.apply(0.42, 0.5, 0.0)
-        smoothing.apply(0.44, 0.5, 1 / 60)
+        before_release = smoothing.apply(0.55, 0.5, 1 / 60)
         smoothing.reanchor(0.7, 0.5, 2 / 60)
         released = smoothing.apply(0.7, 0.5, 3 / 60)
         moved = smoothing.apply(0.8, 0.5, 4 / 60)
-        self.assertLess(abs(released[0] - initial[0]), 0.03)
+        self.assertGreater(before_release[0], initial[0])
+        self.assertLess(abs(released[0] - before_release[0]), 0.001)
         self.assertGreater(moved[0], released[0])
 
 
