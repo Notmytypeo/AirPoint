@@ -360,3 +360,14 @@ class InputController:
     def release_all(self) -> None:
         self.cancel_context_pinch()
         self.left_up()
+
+
+# ── Platform dispatcher ──────────────────────────────────────────────
+# On macOS, replace the Windows-only exports with Quartz-based
+# implementations that expose the exact same public interface.
+if platform.system() == "Darwin":
+    from .system_control_macos import (  # noqa: F811
+        InputController,
+        disable_background_throttling,
+        enable_tracking_priority,
+    )

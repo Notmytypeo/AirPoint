@@ -7,6 +7,9 @@ __pycache__/
 models/*.task
 dist/
 build/
+build-macos/
 @AutomationLog.txt
 .mypy_cache/
 installer_output/
+mac_installer/*.app/
+mac_installer/*.zip

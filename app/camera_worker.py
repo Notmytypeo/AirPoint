@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import platform
 import threading
 import time
 
@@ -495,7 +496,8 @@ class CameraWorker(QThread):
                 if camera_index != active_camera:
                     if capture is not None:
                         capture.release()
-                    capture = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+                    _backend = cv2.CAP_AVFOUNDATION if platform.system() == "Darwin" else cv2.CAP_DSHOW
+                    capture = cv2.VideoCapture(camera_index, _backend)
                     if not capture.isOpened():
                         capture.release()
                         capture = cv2.VideoCapture(camera_index)
@@ -513,7 +515,8 @@ class CameraWorker(QThread):
                         latest_paused = False
                     if not capture.isOpened():
                         emit_error_throttled(
-                            f"Camera {camera_index + 1} is unavailable. Choose another camera or check Windows privacy settings.",
+                            f"Camera {camera_index + 1} is unavailable. Choose another camera or check "
+                            f"{'System Settings → Privacy → Camera' if platform.system() == 'Darwin' else 'Windows privacy settings'}.",
                             f"camera_{camera_index}"
                         )
                         time.sleep(0.5)
