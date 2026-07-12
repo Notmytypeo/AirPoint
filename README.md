@@ -1,6 +1,6 @@
 # AirPoint
 
-AirPoint is a local Windows desktop app that turns two-hand camera gestures into mouse and system-volume controls. Camera frames are processed on-device with MediaPipe; frames are never uploaded.
+AirPoint is a local Windows and macOS desktop app that turns two-hand camera gestures into mouse and system-volume controls. Camera frames are processed on-device with MediaPipe; frames are never uploaded.
 
 ## Gestures
 
@@ -29,9 +29,10 @@ Open the **Developer calibration** tab to access live, persistent calibration co
 
 Three-finger application switching is disabled by default to keep ordinary pointer tracking unchanged. Enable it in Developer calibration under **Swipes**. It uses the raw center of either hand's index, middle, and ring fingertips; the thumb and little finger must remain folded. Right/left sends Alt+Tab/Alt+Shift+Tab, up opens Windows Task View, and down shows the desktop. The Swipes controls expose all thresholds and an optional live debug readout in the camera status pill.
 
-## Download for Windows
+## Download and install
 
-For a normal installation, download **`AirPoint_Setup_1.0.0.exe`** from the [latest release](https://github.com/Notmytypeo/AirPoint/releases/latest), run it, and follow the installer. No Python installation is required.
+- **Windows:** download **`AirPoint_Setup_1.0.0.exe`** from the [latest release](https://github.com/Notmytypeo/AirPoint/releases/latest), run it, and follow the installer. No Python installation is required.
+- **macOS:** download the **`AirPoint-macOS-*.zip`** file from the [latest release](https://github.com/Notmytypeo/AirPoint/releases/latest), unzip it, then drag `AirPoint.app` to Applications. The first launch requires right-clicking the app and choosing **Open** because it is not Apple-notarized.
 
 ## Run
 
@@ -96,7 +97,7 @@ chmod +x build_mac.sh
 ./build_mac.sh
 ```
 
-The output `.app` bundle is written to `dist/AirPoint.app`. Share it as a zip: `zip -r AirPoint.zip dist/AirPoint.app`.
+The app bundle and distributable zip are written to `mac_installer/`. Release downloads are recommended for end users.
 
 ## Accuracy tips
 

@@ -1,0 +1,38 @@
+name: Build macOS installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing GitHub Release tag to receive the macOS zip
+        required: true
+        default: v1.1.0
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the app and installer zip
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r requirements.txt
+          chmod +x build_mac.sh
+          ./build_mac.sh
+      - name: Keep the installer as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AirPoint-macOS
+          path: mac_installer/AirPoint-macOS-*.zip
+      - name: Attach the installer to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: gh release upload "$RELEASE_TAG" mac_installer/AirPoint-macOS-*.zip --clobber

@@ -7,6 +7,11 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 VENV="$ROOT/.venv"
 PYTHON="$VENV/bin/python3"
 
+if [ "$(uname)" != "Darwin" ]; then
+    echo "This launcher must be run on macOS."
+    exit 1
+fi
+
 # Create virtual environment if it doesn't exist
 if [ ! -f "$PYTHON" ]; then
     echo "Creating virtual environment..."
