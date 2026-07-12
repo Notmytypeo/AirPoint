@@ -332,9 +332,12 @@ class GestureEngine:
         image_palm_width = _distance(hand.landmarks[5], hand.landmarks[17])
         image_palm_length = _distance(hand.landmarks[0], hand.landmarks[9])
         # A sideways hand collapses its image width, making 2D contact less
-        # dependable. Trust world geometry more in that case, while preserving
-        # fast image-space clicks for a front-facing hand.
+        # dependable. MediaPipe's depth estimate can also become noisy in this
+        # pose, however, so a clearly visible fingertip contact must still be
+        # allowed through instead of making clicks impossible at thumb edge.
         side_on = image_palm_width < max(0.035, image_palm_length * 0.62)
+        if side_on and image_ratio <= self.tuning["pinch_contact"] * 1.30:
+            return image_ratio
         blend = min(0.55, self.tuning["pinch_3d_blend"] + (0.22 if side_on else 0.0))
         return image_ratio * (1.0 - blend) + world_ratio * blend
 

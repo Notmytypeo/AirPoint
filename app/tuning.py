@@ -39,7 +39,7 @@ DEVELOPER_PARAMETERS = (
     TuningParameter("precision_release_seconds", "Pointer", "Precision release", "Seconds used to smoothly restore normal pointer speed after fingers separate.", 0.07, 0.02, 0.30, 0.01, 2),
     TuningParameter("pinch_deep_contact", "Pinch", "Immediate contact", "Very close thumb-to-finger ratio accepted without confirmation.", 0.30, 0.12, 0.45, 0.01, 2),
     TuningParameter("pinch_contact", "Pinch", "Contact radius", "Normal pinch detection threshold. Higher recognizes a wider pinch.", 0.34, 0.18, 0.60, 0.01, 2),
-    TuningParameter("pinch_3d_blend", "Pinch", "3D pinch blend", "Weight given to world-depth distance. Higher rejects edge-on false pinches; lower favors reliable front-facing contact.", 0.15, 0.00, 0.80, 0.05, 2),
+    TuningParameter("pinch_3d_blend", "Pinch", "3D pinch blend", "Weight given to world-depth distance. Higher rejects edge-on false pinches; lower favors reliable front-facing contact.", 0.08, 0.00, 0.80, 0.05, 2),
     TuningParameter("pinch_confirm", "Pinch", "Confirmed contact", "Filtered ratio that confirms a shallow pinch.", 0.32, 0.12, 0.55, 0.01, 2),
     TuningParameter("pinch_hold_release", "Pinch", "Hold-release threshold", "Filtered ratio below which a held pinch remains active.", 0.50, 0.25, 0.90, 0.01, 2),
     TuningParameter("pinch_clear_release", "Pinch", "Clear-release threshold", "Raw ratio that immediately ends a pinch.", 0.75, 0.35, 1.40, 0.01, 2),

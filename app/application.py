@@ -206,7 +206,7 @@ class MainWindow(QMainWindow):
     def _repair_pointer_response_profile(self) -> None:
         """Update only untouched legacy defaults to the lower-latency profile."""
         revision = int(self.settings.value("developer/pointer_response_revision", 0))
-        if revision >= 4:
+        if revision >= 5:
             return
         legacy_to_faster = {
             "pointer_min_cutoff": (0.70, 0.90),
@@ -219,6 +219,7 @@ class MainWindow(QMainWindow):
             "precision_speed_floor": (0.65, 0.70),
             "two_finger_dead_zone": (0.024, 0.018),
             "pinch_alpha_contact": (0.78, 0.90),
+            "pinch_3d_blend": (0.15, 0.08),
             "click_settle_delay": (0.050, 0.025),
             "gesture_settle_delay": (0.10, 0.04),
         }
@@ -234,7 +235,7 @@ class MainWindow(QMainWindow):
                 pass
         if self.settings.value("developer/precision_release_seconds") is None:
             self.settings.setValue("developer/precision_release_seconds", 0.07)
-        self.settings.setValue("developer/pointer_response_revision", 4)
+        self.settings.setValue("developer/pointer_response_revision", 5)
 
     def _build_sidebar(self) -> QFrame:
         self.sidebar = QFrame()

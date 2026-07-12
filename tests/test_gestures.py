@@ -231,6 +231,17 @@ class GestureEngineTests(unittest.TestCase):
         real_contact = HandObservation("Right", tuple(image_points), tuple(world_points))
         self.assertLess(self.engine._pinch_ratio(real_contact, 8), self.engine.tuning["pinch_contact"])
 
+    def test_clear_thumb_edge_contact_is_not_blocked_by_noisy_depth(self):
+        hand = open_hand("Right")
+        image_points = list(hand.landmarks)
+        image_points[17] = Landmark(image_points[5].x + 0.02, image_points[5].y)
+        thumb = image_points[4]
+        image_points[8] = Landmark(thumb.x + 0.01, thumb.y)
+        world_points = list(hand.landmarks)
+        world_points[8] = Landmark(thumb.x + 0.01, thumb.y, 0.40)
+        thumb_edge_contact = HandObservation("Right", tuple(image_points), tuple(world_points))
+        self.assertLess(self.engine._pinch_ratio(thumb_edge_contact, 8), self.engine.tuning["pinch_contact"])
+
     def test_borderline_pinch_requires_brief_stable_confirmation(self):
         hand = open_hand("Right")
         thumb = hand.landmarks[4]
