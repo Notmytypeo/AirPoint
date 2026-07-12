@@ -236,7 +236,7 @@ class GestureEngineTests(unittest.TestCase):
         thumb = hand.landmarks[4]
         borderline = with_point(hand, 8, thumb.x + 0.0875, thumb.y)  # ratio 0.33
         first = self.engine.process((borderline,), 1.0)
-        confirmed = self.engine.process((borderline,), 1.04)
+        confirmed = self.engine.process((borderline,), 1.02)
         self.assertNotIn("pinch_start", action_kinds(first))
         self.assertIn("pinch_start", action_kinds(confirmed))
 
@@ -295,8 +295,8 @@ class GestureEngineTests(unittest.TestCase):
         self.engine.process((hand,), 0.8)
         self.engine.process((pinched,), 1.0)
         released = self.engine.process((hand,), 1.1)
-        settling = self.engine.process((hand,), 1.149)
-        resumed = self.engine.process((hand,), 1.151)
+        settling = self.engine.process((hand,), 1.124)
+        resumed = self.engine.process((hand,), 1.126)
         self.assertNotIn("move", action_kinds(released))
         self.assertNotIn("move", action_kinds(settling))
         self.assertIn("move", action_kinds(resumed))

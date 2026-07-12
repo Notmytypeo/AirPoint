@@ -383,6 +383,21 @@ class GestureEngine:
         if len(history) < 3 and ratio <= self.tuning["pinch_deep_contact"]:
             self._pinch_candidate_since.pop(key, None)
             return True
+        # A very close contact still needs one follow-up frame once the signal
+        # is warm: this blocks isolated landmark spikes while cutting normal
+        # pinch recognition from roughly two frames to one.
+        if ratio <= self.tuning["pinch_deep_contact"]:
+            # A second close sample within the short median window is enough
+            # for an immediate response. A lone deep sample after an open hand
+            # still waits for one follow-up frame, rejecting detector spikes.
+            if sum(sample <= self.tuning["pinch_contact"] for sample in history) >= 2:
+                self._pinch_candidate_since.pop(key, None)
+                return True
+            candidate_since = self._pinch_candidate_since.setdefault(key, timestamp)
+            if timestamp - candidate_since >= 0.010:
+                self._pinch_candidate_since.pop(key, None)
+                return True
+            return False
         if ratio >= self.tuning["pinch_contact"] or filtered >= self.tuning["pinch_contact"]:
             self._pinch_candidate_since.pop(key, None)
             return False
@@ -392,7 +407,7 @@ class GestureEngine:
             self._pinch_candidate_since.pop(key, None)
             return True
         candidate_since = self._pinch_candidate_since.setdefault(key, timestamp)
-        if timestamp - candidate_since >= 0.025:
+        if timestamp - candidate_since >= 0.010:
             self._pinch_candidate_since.pop(key, None)
             return True
         return False
@@ -789,7 +804,7 @@ class GestureEngine:
                     self._two_finger_scroll_y = self._two_finger_scroll_y * 0.92 + current_y * 0.08
                 else:
                     strength = min(3, 1 + int((abs(delta) - dead_zone) / 0.035))
-                    interval = {1: 0.11, 2: 0.085, 3: 0.065}[strength]
+                    interval = {1: 0.055, 2: 0.045, 3: 0.035}[strength]
                     if timestamp - self._two_finger_scroll_last_emit >= interval:
                         direction = 1 if delta > 0 else -1
                         actions.append(GestureAction("scroll_horizontal" if horizontal else "scroll", amount=direction * strength))

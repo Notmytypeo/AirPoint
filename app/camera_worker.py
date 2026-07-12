@@ -478,9 +478,9 @@ class CameraWorker(QThread):
                 base_options=BaseOptions(model_asset_path=str(model_path)),
                 running_mode=RunningMode.LIVE_STREAM,
                 num_hands=2,
-                min_hand_detection_confidence=0.48,
-                min_hand_presence_confidence=0.45,
-                min_tracking_confidence=0.50,
+                min_hand_detection_confidence=0.42,
+                min_hand_presence_confidence=0.42,
+                min_tracking_confidence=0.45,
                 result_callback=on_result,
             )
             landmarker = HandLandmarker.create_from_options(options)
