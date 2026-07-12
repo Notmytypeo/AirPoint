@@ -1,0 +1,42 @@
+name: Build Windows installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing GitHub Release tag to receive the Windows installer
+        required: true
+        default: v1.1.1
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress --yes
+      - name: Build the application and installer
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build_exe.ps1
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" .\installer.iss
+      - name: Keep the installer as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AirPoint-Windows
+          path: installer_output/AirPoint_Setup_1.0.0.exe
+      - name: Attach the installer to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: gh release upload $env:RELEASE_TAG installer_output\AirPoint_Setup_1.0.0.exe --clobber
