@@ -609,6 +609,21 @@ class GestureEngineTests(unittest.TestCase):
         moved = self.engine.process((shift_hand(hand, dy=-0.08),), 1.1)
         self.assertIn("scroll", action_kinds(moved))
 
+    def test_two_finger_scroll_accepts_a_side_view_using_world_landmarks(self):
+        hand = two_finger_hand("Right")
+        image_points = list(hand.landmarks)
+        # The projected PIP/DIP joints bend when the hand is viewed from the
+        # side, while the world landmarks retain the true raised-finger pose.
+        image_points[7] = Landmark(0.55, 0.49)
+        image_points[11] = Landmark(0.65, 0.44)
+        side_view = HandObservation("Right", tuple(image_points), hand.landmarks)
+        self.engine.process((side_view,), 1.0)
+
+        moved_image = tuple(Landmark(point.x, point.y - 0.08, point.z) for point in image_points)
+        moved_world = tuple(Landmark(point.x, point.y - 0.08, point.z) for point in hand.landmarks)
+        moved = self.engine.process((HandObservation("Right", moved_image, moved_world),), 1.1)
+        self.assertIn("scroll", action_kinds(moved))
+
     def test_two_finger_pose_scrolls_horizontally(self):
         hand = two_finger_hand("Right")
         self.engine.process((hand,), 1.0)
