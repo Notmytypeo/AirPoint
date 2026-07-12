@@ -35,11 +35,28 @@ For a normal installation, download **`AirPoint_Setup_1.0.0.exe`** from the [lat
 
 ## Run
 
+### Windows
+
 Requirements: Windows 10/11, a webcam, and Python 3.10 or newer.
 
 ```powershell
 .\run.ps1
 ```
+
+### macOS
+
+Requirements: macOS 12+, a webcam, and Python 3.10 or newer (install via [Homebrew](https://brew.sh): `brew install python`).
+
+```bash
+chmod +x run_mac.sh
+./run_mac.sh
+```
+
+macOS will request two permissions on first launch:
+- **Camera** — System Settings → Privacy & Security → Camera
+- **Accessibility** — System Settings → Privacy & Security → Accessibility (required for mouse/keyboard control)
+
+Grant both to enable gesture control.
 
 On first launch, the script creates `.venv`, installs dependencies, and the app downloads Google's MediaPipe hand-landmarker model (about 8 MB) into `models/`. The app starts in preview-only mode. Verify that landmarks are stable before pressing **Activate gesture control**.
 
@@ -70,6 +87,17 @@ iscc .\installer.iss
 
 The distributable installer is written to `installer_output\AirPoint_Setup_1.0.0.exe`. The tracked `AirPoint.spec` file is required for reproducible builds; generated `build/`, `dist/`, and installer output remain excluded from Git.
 
+## Build a macOS .app bundle
+
+On a Mac, run:
+
+```bash
+chmod +x build_mac.sh
+./build_mac.sh
+```
+
+The output `.app` bundle is written to `dist/AirPoint.app`. Share it as a zip: `zip -r AirPoint.zip dist/AirPoint.app`.
+
 ## Accuracy tips
 
 - Keep both hands 45–100 cm from the camera and avoid strong backlighting.
@@ -82,7 +110,8 @@ The distributable installer is written to `installer_output\AirPoint_Setup_1.0.0
 - `app/camera_worker.py` — camera capture and MediaPipe tracking on a dedicated thread
 - `app/gestures.py` — gesture geometry, hysteresis, drag/pause state machine
 - `app/filters.py` — adaptive One Euro pointer smoothing
-- `app/system_control.py` — low-latency Windows `SendInput` mouse/keyboard events
+- `app/system_control.py` — platform dispatcher + Windows `SendInput` mouse/keyboard events
+- `app/system_control_macos.py` — macOS Quartz/CoreGraphics mouse/keyboard events
 - `app/application.py` — Qt desktop interface
 
 The camera requests the original high-quality 960×540 MJPEG input with driver-managed exposure, and MediaPipe runs in asynchronous live-stream mode. New frames replace stale work instead of waiting in a processing queue. Hand tracking uses the original 512-pixel inference frame and 768-pixel preview pipeline.
@@ -102,5 +131,11 @@ When an index pinch begins over a Slider, ScrollBar, or Thumb exposed through Wi
 The gesture engine is deliberately independent from Qt, OpenCV, and MediaPipe so it can be unit tested without a camera:
 
 ```powershell
+# Windows
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+```bash
+# macOS
+.venv/bin/python3 -m unittest discover -s tests -v
 ```
