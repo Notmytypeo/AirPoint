@@ -22,12 +22,12 @@ class TuningParameter:
 # setting that can destabilize the pointer or gesture state machine.
 DEVELOPER_PARAMETERS = (
     TuningParameter("pointer_min_cutoff", "Pointer", "Rest smoothing", "One Euro base cutoff (Hz). Lower is steadier; higher is more immediate.", 0.90, 0.10, 3.00, 0.05, 2),
-    TuningParameter("inference_clahe_clip", "Camera tracking", "Low-light enhancement", "Local contrast enhancement applied only to the inference image. Zero disables it.", 1.60, 0.00, 4.00, 0.10, 2),
+    TuningParameter("inference_clahe_clip", "Camera tracking", "Low-light enhancement", "Local contrast enhancement applied only to the inference image. Zero disables it.", 0.00, 0.00, 4.00, 0.10, 2),
     TuningParameter("pointer_beta", "Pointer", "Motion response", "One Euro speed response. Higher reduces lag while moving.", 1.15, 0.10, 3.00, 0.05, 2),
     TuningParameter("pointer_dead_zone", "Pointer", "Tremor dead zone", "Normalized movement ignored near rest. Higher removes more micro-jitter.", 0.0031, 0.0005, 0.0200, 0.0005, 4),
     TuningParameter("prediction_frames", "Pointer", "Prediction lookahead", "Constant-velocity cursor lookahead in frames. Zero disables prediction.", 1.00, 0.00, 1.00, 0.10, 2),
     TuningParameter("prediction_cap", "Pointer", "Prediction cap", "Maximum normalized cursor extrapolation per frame.", 0.018, 0.002, 0.040, 0.001, 3),
-    TuningParameter("pointer_confidence_floor", "Pointer", "Confidence floor", "Hand confidence below this level receives extra smoothing to resist landmark noise.", 0.45, 0.10, 0.90, 0.05, 2),
+    TuningParameter("pointer_confidence_floor", "Pointer", "Confidence floor", "Only very uncertain hand detections receive extra smoothing, keeping ordinary tracking responsive.", 0.25, 0.05, 0.90, 0.05, 2),
     TuningParameter("pointer_jump_threshold", "Pointer", "Jump rejection", "Maximum normalized one-frame innovation before a low-quality landmark jump is ignored.", 0.095, 0.030, 0.250, 0.005, 3),
     TuningParameter("workspace_base_gain", "Pointer", "Workspace base gain", "Pointer mapping gain before the sensitivity slider is applied.", 0.84, 0.40, 1.40, 0.02, 2),
     TuningParameter("workspace_sensitivity_gain", "Pointer", "Sensitivity gain", "Extra workspace gain added by the main sensitivity slider.", 0.48, 0.10, 1.00, 0.02, 2),
@@ -36,6 +36,7 @@ DEVELOPER_PARAMETERS = (
     TuningParameter("precision_ratio", "Pointer", "Precision-zone distance", "Pinch ratio that enters slow final-approach pointer control.", 0.62, 0.35, 1.20, 0.01, 2),
     TuningParameter("precision_step", "Pointer", "Precision speed cap", "Maximum normalized pointer movement per frame near a pinch. Higher is faster; the minimum keeps the cursor from freezing.", 0.012, 0.006, 0.030, 0.001, 3),
     TuningParameter("precision_speed_floor", "Pointer", "Precision minimum speed", "Slowest fraction of precision speed at the pinch edge. Higher prevents the pointer from stalling.", 0.65, 0.35, 1.00, 0.05, 2),
+    TuningParameter("precision_release_seconds", "Pointer", "Precision release", "Seconds used to smoothly restore normal pointer speed after fingers separate.", 0.07, 0.02, 0.30, 0.01, 2),
     TuningParameter("pinch_deep_contact", "Pinch", "Immediate contact", "Very close thumb-to-finger ratio accepted without confirmation.", 0.30, 0.12, 0.45, 0.01, 2),
     TuningParameter("pinch_contact", "Pinch", "Contact radius", "Normal pinch detection threshold. Higher recognizes a wider pinch.", 0.34, 0.18, 0.60, 0.01, 2),
     TuningParameter("pinch_3d_blend", "Pinch", "3D pinch blend", "Weight given to world-depth distance. Higher rejects edge-on false pinches; lower favors reliable front-facing contact.", 0.15, 0.00, 0.80, 0.05, 2),

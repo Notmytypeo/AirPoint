@@ -119,6 +119,7 @@ class MainWindow(QMainWindow):
         self._developer_tuning = normalized_tuning()
         self._developer_inputs: dict[str, QDoubleSpinBox | QCheckBox] = {}
         self._focus_updating = False
+        self._last_hand_state: tuple[bool, bool] | None = None
 
         root = QWidget()
         root.setObjectName("root")
@@ -205,13 +206,15 @@ class MainWindow(QMainWindow):
     def _repair_pointer_response_profile(self) -> None:
         """Update only untouched legacy defaults to the lower-latency profile."""
         revision = int(self.settings.value("developer/pointer_response_revision", 0))
-        if revision >= 1:
+        if revision >= 2:
             return
         legacy_to_faster = {
             "pointer_min_cutoff": (0.70, 0.90),
             "pointer_beta": (0.90, 1.15),
             "prediction_cap": (0.014, 0.018),
             "precision_speed_floor": (0.55, 0.65),
+            "pointer_confidence_floor": (0.45, 0.25),
+            "inference_clahe_clip": (1.60, 0.00),
         }
         for key, (legacy_value, improved_value) in legacy_to_faster.items():
             saved = self.settings.value(f"developer/{key}")
@@ -223,7 +226,9 @@ class MainWindow(QMainWindow):
                     self.settings.setValue(f"developer/{key}", improved_value)
             except (TypeError, ValueError):
                 pass
-        self.settings.setValue("developer/pointer_response_revision", 1)
+        if self.settings.value("developer/precision_release_seconds") is None:
+            self.settings.setValue("developer/precision_release_seconds", 0.07)
+        self.settings.setValue("developer/pointer_response_revision", 2)
 
     def _build_sidebar(self) -> QFrame:
         self.sidebar = QFrame()
@@ -919,14 +924,24 @@ class MainWindow(QMainWindow):
             self.worker.set_left_handed(checked)
 
     def _update_telemetry(self, data: dict) -> None:
-        self.error_frame.hide()
-        self.right_status.setObjectName("handOn" if data["right"] else "handOff")
-        self.left_status.setObjectName("handOn" if data["left"] else "handOff")
-        for widget in (self.right_status, self.left_status):
-            widget.style().unpolish(widget)
-            widget.style().polish(widget)
-        self.gesture_status.setText(data["gesture"])
-        self.fps_label.setText(f"{data['fps']:.0f} FPS" if data["fps"] else "WARMING UP")
+        if self.error_frame.isVisible():
+            self.error_frame.hide()
+
+        hand_state = (bool(data["right"]), bool(data["left"]))
+        if hand_state != self._last_hand_state:
+            self._last_hand_state = hand_state
+            self.right_status.setObjectName("handOn" if hand_state[0] else "handOff")
+            self.left_status.setObjectName("handOn" if hand_state[1] else "handOff")
+            for widget in (self.right_status, self.left_status):
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+
+        gesture = str(data["gesture"])
+        if self.gesture_status.text() != gesture:
+            self.gesture_status.setText(gesture)
+        fps_text = f"{data['fps']:.0f} FPS" if data["fps"] else "WARMING UP"
+        if self.fps_label.text() != fps_text:
+            self.fps_label.setText(fps_text)
 
     def _paused_changed(self, paused: bool) -> None:
         self._last_paused = paused

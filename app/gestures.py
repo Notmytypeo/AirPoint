@@ -190,6 +190,7 @@ class GestureEngine:
                 prediction_cap=settings["prediction_cap"],
                 precision_step=settings["precision_step"],
                 precision_speed_floor=settings["precision_speed_floor"],
+                precision_release_seconds=settings["precision_release_seconds"],
                 confidence_floor=settings["pointer_confidence_floor"],
                 jump_threshold=settings["pointer_jump_threshold"],
             )

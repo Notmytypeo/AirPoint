@@ -21,11 +21,17 @@ class TuningTests(unittest.TestCase):
 
     def test_engine_applies_live_filter_tuning(self):
         engine = GestureEngine()
-        tuning = normalized_tuning({"pointer_dead_zone": 0.01, "prediction_frames": 0.4, "precision_step": 0.008})
+        tuning = normalized_tuning({
+            "pointer_dead_zone": 0.01,
+            "prediction_frames": 0.4,
+            "precision_step": 0.008,
+            "precision_release_seconds": 0.12,
+        })
         engine.configure(1.0, (0, 0, 1920, 1080), tuning=tuning)
         self.assertEqual(engine._filter.dead_zone, 0.01)
         self.assertEqual(engine._filter.lookahead_frames, 0.4)
         self.assertEqual(engine._filter.precision_step, 0.008)
+        self.assertEqual(engine._filter.precision_release_seconds, 0.12)
 
     def test_precision_speed_cap_has_a_safe_minimum(self):
         tuned = normalized_tuning({"precision_step": 0.001})

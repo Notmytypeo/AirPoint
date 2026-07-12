@@ -100,9 +100,9 @@ class PointFilterTests(unittest.TestCase):
 
     def test_consistent_fast_motion_is_accepted_after_jump_confirmation(self):
         smoothing = PointFilter(jump_threshold=0.06)
-        smoothing.apply(0.2, 0.5, 0.0, confidence=0.9)
-        rejected = smoothing.apply(0.45, 0.5, 1 / 60, confidence=0.9)
-        accepted = smoothing.apply(0.7, 0.5, 2 / 60, confidence=0.9)
+        smoothing.apply(0.2, 0.5, 0.0, confidence=0.6)
+        rejected = smoothing.apply(0.45, 0.5, 1 / 60, confidence=0.6)
+        accepted = smoothing.apply(0.7, 0.5, 2 / 60, confidence=0.6)
         self.assertLess(rejected[0], 0.23)
         self.assertGreater(accepted[0], rejected[0] + 0.02)
 
