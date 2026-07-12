@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, Qt, QLockFile, QSettings, QSize, QPropertyAnimation, QEasingCurve, QSequentialAnimationGroup, QVariantAnimation, QTimer
-from PySide6.QtGui import QCloseEvent, QImage, QPixmap, QColor
+from PySide6.QtGui import QCloseEvent, QIcon, QImage, QPixmap, QColor
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractSpinBox,
@@ -42,6 +42,13 @@ def label(text: str = "", object_name: str = "") -> QLabel:
     if object_name:
         widget.setObjectName(object_name)
     return widget
+
+
+def asset_path(name: str) -> Path:
+    """Resolve packaged and source-tree assets from the same location."""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "app" / "assets" / name
+    return Path(__file__).with_name("assets") / name
 
 
 class CameraView(QLabel):
@@ -96,6 +103,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("AirPoint · Gesture Control")
+        self.setWindowIcon(QIcon(str(asset_path("airpoint-logo.svg"))))
         self.setMinimumSize(1160, 800)
         self.resize(1380, 900)
         self.settings = QSettings("AirPoint", "GestureControl")
@@ -279,11 +287,7 @@ class MainWindow(QMainWindow):
 
         logo = QLabel()
         logo.setObjectName("titleLogo")
-        if getattr(sys, "frozen", False):
-            _asset_dir = Path(sys._MEIPASS) / "app" / "assets"
-        else:
-            _asset_dir = Path(__file__).with_name("assets")
-        logo.setPixmap(QPixmap(str(_asset_dir / "cursor-mark.svg")))
+        logo.setPixmap(QPixmap(str(asset_path("airpoint-logo.svg"))))
         logo.setScaledContents(True)
         logo.setFixedSize(38, 38)
         header.addWidget(logo, 0, Qt.AlignVCenter)
