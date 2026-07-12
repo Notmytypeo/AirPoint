@@ -1,3 +1,4 @@
+import math
 import unittest
 
 from app.filters import OneEuroFilter, PointFilter
@@ -88,6 +89,31 @@ class PointFilterTests(unittest.TestCase):
         smoothing.apply(0.11, 0.1, 0.1)
         smoothing.reset()
         self.assertEqual(smoothing.apply(0.9, 0.8, 1.0), (0.9, 0.8))
+
+    def test_confidence_aware_filter_rejects_a_single_large_jump(self):
+        smoothing = PointFilter(jump_threshold=0.06)
+        smoothing.apply(0.4, 0.4, 0.0, confidence=0.8)
+        held = smoothing.apply(0.85, 0.85, 1 / 60, confidence=0.55)
+        self.assertLess(math.hypot(held[0] - 0.4, held[1] - 0.4), 0.01)
+        recovered = smoothing.apply(0.405, 0.4, 2 / 60, confidence=0.8)
+        self.assertLess(math.hypot(recovered[0] - 0.4, recovered[1] - 0.4), 0.03)
+
+    def test_consistent_fast_motion_is_accepted_after_jump_confirmation(self):
+        smoothing = PointFilter(jump_threshold=0.06)
+        smoothing.apply(0.2, 0.5, 0.0, confidence=0.9)
+        rejected = smoothing.apply(0.45, 0.5, 1 / 60, confidence=0.9)
+        accepted = smoothing.apply(0.7, 0.5, 2 / 60, confidence=0.9)
+        self.assertLess(rejected[0], 0.23)
+        self.assertGreater(accepted[0], rejected[0] + 0.02)
+
+    def test_low_confidence_measurements_move_more_cautiously(self):
+        high_confidence = PointFilter(jump_threshold=0.2)
+        low_confidence = PointFilter(jump_threshold=0.2)
+        high_confidence.apply(0.4, 0.5, 0.0, confidence=1.0)
+        low_confidence.apply(0.4, 0.5, 0.0, confidence=1.0)
+        high = high_confidence.apply(0.46, 0.5, 1 / 60, confidence=1.0)
+        low = low_confidence.apply(0.46, 0.5, 1 / 60, confidence=0.45)
+        self.assertGreater(high[0], low[0])
 
 
 if __name__ == "__main__":

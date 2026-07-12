@@ -155,20 +155,21 @@ class CameraWorker(QThread):
     def _to_hands(result, swap_hands: bool = False) -> tuple[HandObservation, ...]:
         if not result or not hasattr(result, "hand_landmarks"):
             return ()
-        detected: list[tuple[str, tuple[Landmark, ...], tuple[Landmark, ...] | None]] = []
+        detected: list[tuple[str, tuple[Landmark, ...], tuple[Landmark, ...] | None, float]] = []
         world_landmarks_list = getattr(result, "hand_world_landmarks", None) or []
         for i, landmarks in enumerate(result.hand_landmarks):
             if i >= len(result.handedness) or not result.handedness[i]:
                 continue
             category = result.handedness[i][0]
             name = getattr(category, "category_name", None) or getattr(category, "display_name", "")
+            confidence = max(0.0, min(1.0, float(getattr(category, "score", 1.0) or 0.0)))
             points = tuple(Landmark(float(p.x), float(p.y), float(p.z)) for p in landmarks)
             
             world_points = None
             if i < len(world_landmarks_list) and world_landmarks_list[i]:
                 world_points = tuple(Landmark(float(p.x), float(p.y), float(p.z)) for p in world_landmarks_list[i])
                 
-            detected.append((str(name), points, world_points))
+            detected.append((str(name), points, world_points, confidence))
 
         # MediaPipe occasionally assigns the same handedness to both hands in
         # dim/low-FPS frames. For a mirrored preview, the smaller wrist x is
@@ -178,13 +179,16 @@ class CameraWorker(QThread):
             repaired = ["", ""]
             repaired[ordered[0]] = "Right"
             repaired[ordered[1]] = "Left"
-            detected = [(repaired[index], points, world) for index, (_, points, world) in enumerate(detected)]
+            detected = [
+                (repaired[index], points, world, confidence)
+                for index, (_, points, world, confidence) in enumerate(detected)
+            ]
 
         hands: list[HandObservation] = []
-        for name, points, world_points in detected:
+        for name, points, world_points, confidence in detected:
             if swap_hands:
                 name = "Left" if name.lower() == "right" else "Right" if name.lower() == "left" else name
-            hands.append(HandObservation(name, points, world_points))
+            hands.append(HandObservation(name, points, world_points, confidence))
         return tuple(hands)
 
     @staticmethod
@@ -256,7 +260,12 @@ class CameraWorker(QThread):
             label_at = points[0]
             # Keep the existing text rendering path while showing the precise
             # camera-relative orientation beside the handedness label.
-            hand = HandObservation(hand.handedness.upper() + " / " + orientation, hand.landmarks, hand.world_landmarks)
+            hand = HandObservation(
+                hand.handedness.upper() + " / " + orientation,
+                hand.landmarks,
+                hand.world_landmarks,
+                hand.confidence,
+            )
             state = " · EDGE" if turned else ""
             cv2.putText(frame, hand.handedness.upper() + state, (label_at[0] - 14, label_at[1] + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
 

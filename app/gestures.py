@@ -23,6 +23,7 @@ class HandObservation:
     handedness: str
     landmarks: tuple[Landmark, ...]
     world_landmarks: tuple[Landmark, ...] | None = None
+    confidence: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -189,6 +190,8 @@ class GestureEngine:
                 prediction_cap=settings["prediction_cap"],
                 precision_step=settings["precision_step"],
                 precision_speed_floor=settings["precision_speed_floor"],
+                confidence_floor=settings["pointer_confidence_floor"],
+                jump_threshold=settings["pointer_jump_threshold"],
             )
 
     def configure(
@@ -395,6 +398,7 @@ class GestureEngine:
         timestamp: float,
         motion_filter: PointFilter | None = None,
         precision_factor: float = 0.0,
+        confidence: float = 1.0,
     ) -> tuple[int, int]:
         # The camera frame is mirrored before inference, so x maps naturally.
         # Amplify the central hand workspace so reaching every screen edge does
@@ -406,7 +410,9 @@ class GestureEngine:
         margin_x = margin_y = self.tuning["workspace_margin"]
         nx = max(0.0, min(1.0, (nx - margin_x) / (1.0 - 2 * margin_x)))
         ny = max(0.0, min(1.0, (ny - margin_y) / (1.0 - 2 * margin_y)))
-        sx, sy = (motion_filter or self._filter).apply(nx, ny, timestamp, precision_factor=precision_factor)
+        sx, sy = (motion_filter or self._filter).apply(
+            nx, ny, timestamp, precision_factor=precision_factor, confidence=confidence,
+        )
         left, top, width, height = self.screen
         return round(left + sx * max(1, width - 1)), round(top + sy * max(1, height - 1))
 
@@ -817,7 +823,7 @@ class GestureEngine:
                 points[8].z,
             )
             if self._drag_moved:
-                pointer_x, pointer_y = self._map_pointer(drag_point, timestamp)
+                pointer_x, pointer_y = self._map_pointer(drag_point, timestamp, confidence=right.confidence)
                 actions.append(GestureAction("move", pointer_x, pointer_y))
                 self._last_pointer_point = drag_point
         elif index_now and not middle_now and not drag_started:
@@ -826,7 +832,9 @@ class GestureEngine:
                 points[8].y + self._pinch_offset[1],
                 points[8].z,
             )
-            pointer_x, pointer_y = self._map_pointer(drag_point, timestamp, self._pinch_drag_filter)
+            pointer_x, pointer_y = self._map_pointer(
+                drag_point, timestamp, self._pinch_drag_filter, confidence=right.confidence,
+            )
             actions.append(GestureAction("pinch_move", pointer_x, pointer_y))
         elif not index_now and not middle_now and not was_index_pinched and not was_middle_pinched and timestamp >= self._pointer_resume_at:
             # Graduated slowdown: the pointer decelerates linearly as the
@@ -844,7 +852,9 @@ class GestureEngine:
                     precision_factor = proximity
                 else:
                     precision_factor = 1.0
-            pointer_x, pointer_y = self._map_pointer(points[8], timestamp, precision_factor=precision_factor)
+            pointer_x, pointer_y = self._map_pointer(
+                points[8], timestamp, precision_factor=precision_factor, confidence=right.confidence,
+            )
             actions.append(GestureAction("move", pointer_x, pointer_y))
             self._last_pointer_point = points[8]
             self._pinch_offset = (0.0, 0.0)

@@ -27,6 +27,8 @@ DEVELOPER_PARAMETERS = (
     TuningParameter("pointer_dead_zone", "Pointer", "Tremor dead zone", "Normalized movement ignored near rest. Higher removes more micro-jitter.", 0.0031, 0.0005, 0.0200, 0.0005, 4),
     TuningParameter("prediction_frames", "Pointer", "Prediction lookahead", "Constant-velocity cursor lookahead in frames. Zero disables prediction.", 1.00, 0.00, 1.00, 0.10, 2),
     TuningParameter("prediction_cap", "Pointer", "Prediction cap", "Maximum normalized cursor extrapolation per frame.", 0.018, 0.002, 0.040, 0.001, 3),
+    TuningParameter("pointer_confidence_floor", "Pointer", "Confidence floor", "Hand confidence below this level receives extra smoothing to resist landmark noise.", 0.45, 0.10, 0.90, 0.05, 2),
+    TuningParameter("pointer_jump_threshold", "Pointer", "Jump rejection", "Maximum normalized one-frame innovation before a low-quality landmark jump is ignored.", 0.095, 0.030, 0.250, 0.005, 3),
     TuningParameter("workspace_base_gain", "Pointer", "Workspace base gain", "Pointer mapping gain before the sensitivity slider is applied.", 0.84, 0.40, 1.40, 0.02, 2),
     TuningParameter("workspace_sensitivity_gain", "Pointer", "Sensitivity gain", "Extra workspace gain added by the main sensitivity slider.", 0.48, 0.10, 1.00, 0.02, 2),
     TuningParameter("workspace_margin", "Pointer", "Workspace margin", "Camera edge margin mapped to screen edges. Lower needs less arm travel.", 0.14, 0.02, 0.30, 0.01, 2),
