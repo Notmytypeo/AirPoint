@@ -2,6 +2,18 @@
 
 AirPoint is a local Windows and macOS desktop app that turns two-hand camera gestures into mouse and system-volume controls. Camera frames are processed on-device with MediaPipe; frames are never uploaded.
 
+## Choose your installer
+
+You do **not** need to download the source code or install Python. Choose one option below.
+
+| Your computer | Download | Beginner guide |
+|---|---|---|
+| **Windows 10 or 11** | [AirPoint Windows installer (.exe)](https://github.com/Notmytypeo/AirPoint/releases/latest/download/AirPoint_Setup_1.0.0.exe) | [Windows installation guide](windows_installer/README.md) |
+| **MacBook with Apple chip** (M1, M2, M3, or M4) | [AirPoint Apple Silicon installer (.zip)](https://github.com/Notmytypeo/AirPoint/releases/latest/download/AirPoint-macOS-arm64.zip) | [macOS installation guide](mac_installer/README.md) |
+| **Older Intel MacBook** | Download `AirPoint-macOS-x86_64.zip` from the [latest release](https://github.com/Notmytypeo/AirPoint/releases/latest) when available | [macOS installation guide](mac_installer/README.md) |
+
+The `windows_installer/` and `mac_installer/` folders contain instructions only. The large installer files are kept on the **Releases** page so downloading is simple and reliable.
+
 ## Gestures
 
 | Gesture | Action |
@@ -28,11 +40,6 @@ Whenever gesture control is activated, AirPoint places the pointer at the center
 Open the **Developer calibration** tab to access live, persistent calibration controls. Every control has a short in-app description and safe bounds. The panel covers pointer smoothing/prediction/workspace/precision, pinch thresholds and hysteresis, click/pause/drag timing, scrolling/volume/zoom response, and swipe tabs. **Reset defaults** restores the tested baseline.
 
 Three-finger application switching is disabled by default to keep ordinary pointer tracking unchanged. Enable it in Developer calibration under **Swipes**. It uses the raw center of either hand's index, middle, and ring fingertips; the thumb and little finger must remain folded. Right/left sends Alt+Tab/Alt+Shift+Tab, up opens Windows Task View, and down shows the desktop. The Swipes controls expose all thresholds and an optional live debug readout in the camera status pill.
-
-## Download and install
-
-- **Windows:** download **`AirPoint_Setup_1.0.0.exe`** from the [latest release](https://github.com/Notmytypeo/AirPoint/releases/latest), run it, and follow the installer. No Python installation is required.
-- **macOS:** download the **`AirPoint-macOS-*.zip`** file from the [latest release](https://github.com/Notmytypeo/AirPoint/releases/latest), unzip it, then drag `AirPoint.app` to Applications. The first launch requires right-clicking the app and choosing **Open** because it is not Apple-notarized.
 
 ## Run
 
