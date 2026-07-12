@@ -1,6 +1,8 @@
 # Install AirPoint on Windows
 
-AirPoint lets you control the mouse pointer, clicks, scrolling, zoom, and volume with hand gestures. It works locally on your PC; camera frames are not uploaded.
+AirPoint turns hand gestures into pointer movement, clicks, scrolling, zoom, and volume control.
+
+Your camera frames stay on your PC and are never uploaded.
 
 ## 1. Download and install
 
