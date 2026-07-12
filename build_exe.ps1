@@ -19,8 +19,9 @@ if (-not (Test-Path $Spec)) {
     exit 1
 }
 
-# Install PyInstaller if not present
-& $Python -c "import PyInstaller" 2>$null
+# Install PyInstaller if not present. Checking with find_spec avoids a missing
+# module traceback becoming a terminating native-command error in PowerShell.
+& $Python -c "import importlib.util; raise SystemExit(0 if importlib.util.find_spec('PyInstaller') else 1)"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Installing PyInstaller..." -ForegroundColor Cyan
     & $Pip install pyinstaller
