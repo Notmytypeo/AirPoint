@@ -93,6 +93,7 @@ class PointFilter:
         self._last_measurement: tuple[float, float] | None = None
         self._measurement_velocity = (0.0, 0.0)
         self._rejected_measurement: tuple[float, float] | None = None
+        self._input_offset = (0.0, 0.0)
 
     def configure(
         self,
@@ -136,7 +137,7 @@ class PointFilter:
         large innovation is rejected. A second movement in the same direction
         is accepted so deliberate fast pointer motion remains responsive.
         """
-        measurement = (x, y)
+        measurement = (x - self._input_offset[0], y - self._input_offset[1])
         confidence_enabled = confidence is not None
         quality = 1.0 if confidence is None else max(0.0, min(1.0, confidence))
         if self._last_measurement is not None:
@@ -236,6 +237,27 @@ class PointFilter:
             max(0.0, min(1.0, base[1] + predicted_dy)),
         )
 
+    def reanchor(self, x: float, y: float, timestamp: float) -> None:
+        """Keep the current cursor position while rebasing to a new hand pose.
+
+        A click pinch naturally changes the fingertip position. When the pinch
+        releases, treating that new pose as the continuation of the old one
+        makes the cursor jump. Re-anchoring turns the difference into a local
+        clutch offset, so only movement *after* release moves the pointer.
+        """
+        target = self._last_base if self._last_base is not None else (x, y)
+        self._input_offset = (x - target[0], y - target[1])
+        self.x.reset()
+        self.y.reset()
+        self.x(target[0], timestamp)
+        self.y(target[1], timestamp)
+        self._last_base = target
+        self._last_time = timestamp
+        self._last_measurement = target
+        self._measurement_velocity = (0.0, 0.0)
+        self._velocity = (0.0, 0.0)
+        self._rejected_measurement = None
+
     def reset(self) -> None:
         self.x.reset()
         self.y.reset()
@@ -245,3 +267,4 @@ class PointFilter:
         self._last_measurement = None
         self._measurement_velocity = (0.0, 0.0)
         self._rejected_measurement = None
+        self._input_offset = (0.0, 0.0)
