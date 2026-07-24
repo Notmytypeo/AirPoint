@@ -69,7 +69,8 @@ class PointFilter:
         prediction_cap: float = 0.014,
         precision_step: float = 0.012,
         precision_speed_floor: float = 0.55,
-        confidence_floor: float = 0.45,
+        precision_release_seconds: float = 0.07,
+        confidence_floor: float = 0.25,
         jump_threshold: float = 0.095,
     ) -> None:
         # Lower cutoff stabilizes a resting hand; higher beta quickly opens the
@@ -85,6 +86,7 @@ class PointFilter:
         self.prediction_cap = max(0.0, prediction_cap)
         self.precision_step = max(0.0, precision_step)
         self.precision_speed_floor = max(0.0, min(1.0, precision_speed_floor))
+        self.precision_release_seconds = max(0.02, min(0.30, precision_release_seconds))
         self.confidence_floor = max(0.0, min(0.95, confidence_floor))
         self.jump_threshold = max(0.01, jump_threshold)
         self._last_base: tuple[float, float] | None = None
@@ -106,6 +108,7 @@ class PointFilter:
         prediction_cap: float,
         precision_step: float,
         precision_speed_floor: float,
+        precision_release_seconds: float,
         confidence_floor: float,
         jump_threshold: float,
     ) -> None:
@@ -116,6 +119,7 @@ class PointFilter:
         self.prediction_cap = max(0.0, prediction_cap)
         self.precision_step = max(0.0, precision_step)
         self.precision_speed_floor = max(0.0, min(1.0, precision_speed_floor))
+        self.precision_release_seconds = max(0.02, min(0.30, precision_release_seconds))
         self.confidence_floor = max(0.0, min(0.95, confidence_floor))
         self.jump_threshold = max(0.01, jump_threshold)
 
@@ -148,8 +152,9 @@ class PointFilter:
                 previous[1] + self._measurement_velocity[1],
             )
             innovation = math.hypot(measurement[0] - expected[0], measurement[1] - expected[1])
-            # High-confidence tracking is allowed a wider movement envelope;
-            # uncertain classification becomes more conservative immediately.
+            # Only uncertain landmark samples need jump rejection. Handedness
+            # scores from a clear, well-lit hand are routinely above 0.7, so
+            # treating them as direct measurements avoids an added frame of lag.
             jump_limit = self.jump_threshold * (0.65 + 0.35 * quality)
             consistent_motion = False
             if self._rejected_measurement is not None:
@@ -158,7 +163,8 @@ class PointFilter:
                 next_dx = measurement[0] - self._rejected_measurement[0]
                 next_dy = measurement[1] - self._rejected_measurement[1]
                 consistent_motion = prior_dx * next_dx + prior_dy * next_dy > 0.0
-            if confidence_enabled and innovation > jump_limit and not consistent_motion:
+            uncertain_sample = quality < 0.72
+            if confidence_enabled and uncertain_sample and innovation > jump_limit and not consistent_motion:
                 self._rejected_measurement = measurement
                 self._velocity = (self._velocity[0] * 0.55, self._velocity[1] * 0.55)
                 return self._last_base if self._last_base is not None else previous
@@ -166,7 +172,9 @@ class PointFilter:
             if confidence_enabled:
                 span = max(1e-6, 1.0 - self.confidence_floor)
                 normalized_quality = max(0.0, min(1.0, (quality - self.confidence_floor) / span))
-                blend = 0.35 + 0.65 * normalized_quality
+                # Retain responsiveness for usable low-confidence samples;
+                # the jump gate above handles the genuinely suspicious ones.
+                blend = 0.70 + 0.30 * normalized_quality
                 measurement = (
                     previous[0] + (measurement[0] - previous[0]) * blend,
                     previous[1] + (measurement[1] - previous[1]) * blend,
@@ -201,7 +209,10 @@ class PointFilter:
         if precision_factor >= self._precision_memory:
             self._precision_memory = precision_factor
         else:
-            self._precision_memory = max(precision_factor, self._precision_memory - elapsed / 0.16)
+            self._precision_memory = max(
+                precision_factor,
+                self._precision_memory - elapsed / self.precision_release_seconds,
+            )
         precision_factor = self._precision_memory
         precision_active = precision_factor > 0.0
         if precision_active and distance > 0.0:

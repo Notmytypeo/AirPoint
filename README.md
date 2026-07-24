@@ -8,7 +8,7 @@ You do **not** need to download the source code or install Python. Choose one op
 
 | Your computer | Download | Beginner guide |
 |---|---|---|
-| **Windows 10 or 11** | [AirPoint Windows installer (.exe)](https://github.com/Notmytypeo/AirPoint/releases/latest/download/AirPoint_Setup_1.0.0.exe) | [Windows installation guide](windows_installer/README.md) |
+| **Windows 10 or 11** | [AirPoint Windows installer (.exe)](https://github.com/Notmytypeo/AirPoint/releases/latest/download/AirPoint_Setup_1.2.0.exe) | [Windows installation guide](windows_installer/README.md) |
 | **MacBook with Apple chip** (M1, M2, M3, or M4) | [AirPoint Apple Silicon installer (.zip)](https://github.com/Notmytypeo/AirPoint/releases/latest/download/AirPoint-macOS-arm64.zip) | [macOS installation guide](mac_installer/README.md) |
 | **Older Intel MacBook** | Download `AirPoint-macOS-x86_64.zip` from the [latest release](https://github.com/Notmytypeo/AirPoint/releases/latest) when available | [macOS installation guide](mac_installer/README.md) |
 
@@ -82,18 +82,17 @@ Run this once from PowerShell:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\Install-Startup.ps1"
 ```
 
-AirPoint starts maximized after Windows sign-in, with PowerShell hidden. To remove it from startup, run the same command with `-Remove`.
+You can also enable **Launch at startup** directly in the Camera preferences. AirPoint starts minimized after Windows sign-in so the gesture-status badge remains available without opening the main window. To remove it from startup, turn the option off or run the same command with `-Remove`.
 
 ## Build a standalone Windows installer
 
-Build the PyInstaller one-folder bundle, then compile `installer.iss` with Inno Setup:
+Build the versioned PyInstaller bundle and Inno Setup installer:
 
 ```powershell
-.\build_exe.ps1
-iscc .\installer.iss
+.\build_installer.ps1
 ```
 
-The distributable installer is written to `installer_output\AirPoint_Setup_1.0.0.exe`. The tracked `AirPoint.spec` file is required for reproducible builds; generated `build/`, `dist/`, and installer output remain excluded from Git.
+The distributable installer is written to `installer_output\AirPoint_Setup_1.2.0.exe`. The version comes from `app/__init__.py`, and the same value is embedded in the app executable and passed into Inno Setup. The tracked `AirPoint.spec` file is required for reproducible builds; generated `build/`, `dist/`, and installer output remain excluded from Git.
 
 ## Build a macOS .app bundle
 
@@ -124,6 +123,7 @@ The app bundle and distributable zip are written to `mac_installer/`. Release do
 
 The camera requests the original high-quality 960×540 MJPEG input with driver-managed exposure, and MediaPipe runs in asynchronous live-stream mode. New frames replace stale work instead of waiting in a processing queue. Hand tracking uses the original 512-pixel inference frame and 768-pixel preview pipeline.
 AirPoint also enforces a single running instance so two windows cannot compete for the camera and processor.
+The current gesture is shown in a click-through, always-on-top badge at the bottom-left of the primary display. It stays updated while the main AirPoint window is minimized.
 When minimized, AirPoint switches to tracking-only mode: preview rendering and UI telemetry pause while gesture processing retains HighQoS background execution.
 Pinches use a calibrated blend of the original 2D thumb-to-fingertip ratio and MediaPipe world-landmark 3D separation, both normalized by palm scale. The 2D signal keeps front-facing contact responsive; the 3D component rejects edge-on projected overlaps. The Developer tab exposes the 3D blend. Deep contact and clear release remain immediate, while lightweight ratio smoothing, brief boundary confirmation, and release dropout protection prevent landmark jitter from creating or interrupting pinches.
 Pointer motion uses a responsive One Euro filter plus a tiny radial tremor dead zone. Its amplified central workspace reaches screen edges with roughly 20% less physical hand travel while retaining sensitivity adjustment. Tracking uses a 512-pixel inference frame, while the lighter preview can refresh at up to 45 FPS and UI telemetry is throttled separately from gesture processing.

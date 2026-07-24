@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing GitHub Release tag to receive the Windows installer
-        required: true
-        default: v1.1.1
+        description: Existing GitHub Release tag; leave blank to use app.__version__
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -19,6 +19,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Read release metadata
+        id: metadata
+        shell: pwsh
+        run: |
+          $Version = (python -c "from app import __version__; print(__version__)").Trim()
+          $ReleaseTag = "${{ inputs.release_tag }}"
+          if ([string]::IsNullOrWhiteSpace($ReleaseTag)) {
+            $ReleaseTag = "v$Version"
+          }
+          "version=$Version" >> $env:GITHUB_OUTPUT
+          "tag=$ReleaseTag" >> $env:GITHUB_OUTPUT
       - name: Install Inno Setup
         run: choco install innosetup --no-progress --yes
       - name: Build the application and installer
@@ -27,16 +38,16 @@ jobs:
           python -m venv .venv
           .\.venv\Scripts\python.exe -m pip install --upgrade pip
           .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build_exe.ps1
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" .\installer.iss
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build_installer.ps1
       - name: Keep the installer as a workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AirPoint-Windows
-          path: installer_output/AirPoint_Setup_1.0.0.exe
+          name: AirPoint-Windows-${{ steps.metadata.outputs.version }}
+          path: installer_output/AirPoint_Setup_${{ steps.metadata.outputs.version }}.exe
       - name: Attach the installer to the release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: gh release upload $env:RELEASE_TAG installer_output\AirPoint_Setup_1.0.0.exe --clobber
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          INSTALLER_PATH: installer_output\AirPoint_Setup_${{ steps.metadata.outputs.version }}.exe
+        run: gh release upload $env:RELEASE_TAG $env:INSTALLER_PATH --clobber

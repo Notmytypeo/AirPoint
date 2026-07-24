@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from .camera_worker import CameraWorker
+from .startup import is_startup_enabled, set_startup_enabled, startup_supported
 from .styles import APP_STYLE
 from .system_control import disable_background_throttling
 from .tuning import DEVELOPER_PARAMETERS, normalized_tuning
@@ -99,6 +100,103 @@ class GestureRow(QFrame):
         self.hint_label.setText(hint)
 
 
+class GestureStatusOverlay(QLabel):
+    """Click-through gesture badge anchored over the primary taskbar."""
+
+    LEFT_MARGIN = 14
+    BOTTOM_MARGIN = 10
+    TOPMOST_REFRESH_MS = 200
+
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self.setWindowFlags(
+            Qt.Tool
+            | Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint
+            | Qt.WindowDoesNotAcceptFocus
+            | Qt.WindowTransparentForInput
+        )
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAlignment(Qt.AlignCenter)
+        self.setFixedHeight(28)
+        self.setStyleSheet(
+            """
+            QLabel {
+                background: #1E1B4B;
+                border: 1px solid rgba(99, 102, 241, 0.65);
+                border-radius: 8px;
+                padding: 0 14px;
+                color: #C7D2FE;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            """
+        )
+        self.set_status(text)
+
+        app = QApplication.instance()
+        if app is not None:
+            app.primaryScreenChanged.connect(self._reposition)
+            app.applicationStateChanged.connect(self._keep_on_top)
+
+        # Windows Explorer periodically promotes the taskbar within the
+        # topmost-window band when focus changes. Refreshing our no-activate
+        # z-order keeps the badge visible without intercepting user input.
+        self._topmost_timer = QTimer(self)
+        self._topmost_timer.setInterval(self.TOPMOST_REFRESH_MS)
+        self._topmost_timer.timeout.connect(self._keep_on_top)
+        self._topmost_timer.start()
+
+    @classmethod
+    def target_position(cls, screen_geometry, badge_size):
+        """Return the bottom-left taskbar position used by the status badge."""
+        return (
+            screen_geometry.left() + cls.LEFT_MARGIN,
+            screen_geometry.bottom() - cls.BOTTOM_MARGIN - badge_size.height() + 1,
+        )
+
+    def set_status(self, text: str) -> None:
+        if self.text() != text:
+            super().setText(text)
+            self.adjustSize()
+        self._reposition()
+
+    def _reposition(self, *_args) -> None:
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+        x, y = self.target_position(screen.geometry(), self.size())
+        self.move(x, y)
+
+    def _keep_on_top(self, *_args) -> None:
+        if not self.isVisible():
+            return
+        self._reposition()
+        self.raise_()
+        if sys.platform == "win32":
+            # HWND_TOPMOST plus SWP_NOACTIVATE keeps the badge above the
+            # taskbar without pulling focus away from the current app.
+            try:
+                import ctypes
+
+                ctypes.windll.user32.SetWindowPos(
+                    ctypes.c_void_p(int(self.winId())),
+                    ctypes.c_void_p(-1),
+                    0,
+                    0,
+                    0,
+                    0,
+                    0x0001 | 0x0002 | 0x0010 | 0x0040 | 0x0200,
+                )
+            except (AttributeError, OSError):
+                pass
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._keep_on_top()
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -119,6 +217,8 @@ class MainWindow(QMainWindow):
         self._developer_tuning = normalized_tuning()
         self._developer_inputs: dict[str, QDoubleSpinBox | QCheckBox] = {}
         self._focus_updating = False
+        self._startup_updating = False
+        self._last_hand_state: tuple[bool, bool] | None = None
 
         root = QWidget()
         root.setObjectName("root")
@@ -129,10 +229,13 @@ class MainWindow(QMainWindow):
 
         outer.addWidget(self._build_content(), 1)
         self._apply_theme()
+        self.gesture_overlay = GestureStatusOverlay(self.gesture_status.text())
+        self.gesture_overlay.show()
 
         self.worker = CameraWorker()
         self.worker.frame_ready.connect(self.camera_view.set_frame)
         self.worker.telemetry.connect(self._update_telemetry)
+        self.worker.gesture_changed.connect(self._gesture_changed)
         self.worker.error.connect(self._show_error)
         self.worker.model_progress.connect(self._model_progress)
         self.worker.paused_changed.connect(self._paused_changed)
@@ -159,6 +262,9 @@ class MainWindow(QMainWindow):
         self.manual_focus.setValue(saved_focus)
         self.focus_lock.setChecked(saved_focus_lock)
         self._focus_updating = False
+        self._startup_updating = True
+        self.launch_at_startup.setChecked(is_startup_enabled())
+        self._startup_updating = False
         self._refresh_focus_controls()
         self._sensitivity_changed(saved_sensitivity)
         self.worker.set_camera(self.camera_select.currentIndex())
@@ -205,13 +311,22 @@ class MainWindow(QMainWindow):
     def _repair_pointer_response_profile(self) -> None:
         """Update only untouched legacy defaults to the lower-latency profile."""
         revision = int(self.settings.value("developer/pointer_response_revision", 0))
-        if revision >= 1:
+        if revision >= 5:
             return
         legacy_to_faster = {
             "pointer_min_cutoff": (0.70, 0.90),
             "pointer_beta": (0.90, 1.15),
             "prediction_cap": (0.014, 0.018),
             "precision_speed_floor": (0.55, 0.65),
+            "pointer_confidence_floor": (0.45, 0.25),
+            "inference_clahe_clip": (1.60, 0.00),
+            "precision_step": (0.012, 0.013),
+            "precision_speed_floor": (0.65, 0.70),
+            "two_finger_dead_zone": (0.024, 0.018),
+            "pinch_alpha_contact": (0.78, 0.90),
+            "pinch_3d_blend": (0.15, 0.08),
+            "click_settle_delay": (0.050, 0.025),
+            "gesture_settle_delay": (0.10, 0.04),
         }
         for key, (legacy_value, improved_value) in legacy_to_faster.items():
             saved = self.settings.value(f"developer/{key}")
@@ -223,7 +338,9 @@ class MainWindow(QMainWindow):
                     self.settings.setValue(f"developer/{key}", improved_value)
             except (TypeError, ValueError):
                 pass
-        self.settings.setValue("developer/pointer_response_revision", 1)
+        if self.settings.value("developer/precision_release_seconds") is None:
+            self.settings.setValue("developer/precision_release_seconds", 0.07)
+        self.settings.setValue("developer/pointer_response_revision", 5)
 
     def _build_sidebar(self) -> QFrame:
         self.sidebar = QFrame()
@@ -564,6 +681,14 @@ class MainWindow(QMainWindow):
         focus_row.addStretch()
         layout.addLayout(focus_row)
 
+        self.launch_at_startup = QCheckBox("Launch at startup")
+        self.launch_at_startup.setToolTip("Start AirPoint minimized when you sign in to Windows")
+        self.launch_at_startup.setEnabled(startup_supported())
+        if not startup_supported():
+            self.launch_at_startup.setToolTip("Launch at startup is currently available on Windows only")
+        self.launch_at_startup.toggled.connect(self._launch_at_startup_changed)
+        layout.addWidget(self.launch_at_startup)
+
         manual_row = QHBoxLayout()
         manual_row.setSpacing(12)
         manual_row.addWidget(label("Manual focus", "muted"))
@@ -899,6 +1024,18 @@ class MainWindow(QMainWindow):
         if not self._focus_updating:
             self._push_focus_settings()
 
+    def _launch_at_startup_changed(self, checked: bool) -> None:
+        if self._startup_updating:
+            return
+        try:
+            set_startup_enabled(checked)
+        except OSError as exc:
+            self._startup_updating = True
+            self.launch_at_startup.setChecked(is_startup_enabled())
+            self._startup_updating = False
+            self.error_text.setText(f"Could not update launch at startup: {exc}")
+            self.error_frame.show()
+
     def _focus_locked_by_camera(self, value: int) -> None:
         self._focus_updating = True
         self.manual_focus.setValue(value)
@@ -919,18 +1056,35 @@ class MainWindow(QMainWindow):
             self.worker.set_left_handed(checked)
 
     def _update_telemetry(self, data: dict) -> None:
-        self.error_frame.hide()
-        self.right_status.setObjectName("handOn" if data["right"] else "handOff")
-        self.left_status.setObjectName("handOn" if data["left"] else "handOff")
-        for widget in (self.right_status, self.left_status):
-            widget.style().unpolish(widget)
-            widget.style().polish(widget)
-        self.gesture_status.setText(data["gesture"])
-        self.fps_label.setText(f"{data['fps']:.0f} FPS" if data["fps"] else "WARMING UP")
+        if self.error_frame.isVisible():
+            self.error_frame.hide()
+
+        hand_state = (bool(data["right"]), bool(data["left"]))
+        if hand_state != self._last_hand_state:
+            self._last_hand_state = hand_state
+            self.right_status.setObjectName("handOn" if hand_state[0] else "handOff")
+            self.left_status.setObjectName("handOn" if hand_state[1] else "handOff")
+            for widget in (self.right_status, self.left_status):
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+
+        self._set_gesture_status(str(data["gesture"]))
+        fps_text = f"{data['fps']:.0f} FPS" if data["fps"] else "WARMING UP"
+        if self.fps_label.text() != fps_text:
+            self.fps_label.setText(fps_text)
 
     def _paused_changed(self, paused: bool) -> None:
         self._last_paused = paused
         self._update_activate_style()
+
+    def _gesture_changed(self, gesture: str) -> None:
+        self._set_gesture_status(gesture)
+
+    def _set_gesture_status(self, gesture: str) -> None:
+        if self.gesture_status.text() != gesture:
+            self.gesture_status.setText(gesture)
+        if self.gesture_overlay.text() != gesture:
+            self.gesture_overlay.set_status(gesture)
 
     def _show_error(self, message: str) -> None:
         self.error_text.setText(message)
@@ -939,13 +1093,14 @@ class MainWindow(QMainWindow):
     def _model_progress(self, value: int) -> None:
         self.download_progress.show()
         self.download_progress.setValue(value)
-        self.gesture_status.setText(f"Preparing hand model · {value}%")
+        self._set_gesture_status(f"Preparing hand model · {value}%")
         if value >= 100:
             self.download_progress.hide()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.control_active = False
         self.worker.set_enabled(False)
+        self.gesture_overlay.close()
         self.worker.stop()
         event.accept()
 

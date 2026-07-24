@@ -4,7 +4,9 @@
 ; ==============================================================================
 
 #define MyAppName "AirPoint"
-#define MyAppVersion "1.0.0"
+#ifndef MyAppVersion
+  #error MyAppVersion must be supplied by build_installer.ps1
+#endif
 #define MyAppPublisher "AirPoint"
 #define MyAppExeName "AirPoint.exe"
 #define MyAppDescription "Gesture-controlled mouse and system controls using hand tracking"
@@ -14,7 +16,7 @@ AppId={{8F0E46B5-3C5A-4D2E-B0BE-AE1C0B6C0001}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-AppSupportURL=https://github.com/airpoint
+AppSupportURL=https://github.com/Notmytypeo/AirPoint
 SetupIconFile=app\assets\airpoint-logo.ico
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
@@ -44,7 +46,9 @@ Source: "dist\AirPoint\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--minimized"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: startupicon
+
+[Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#MyAppName}"; ValueData: """{app}\{#MyAppExeName}"" --minimized"; Flags: uninsdeletevalue; Tasks: startupicon
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent

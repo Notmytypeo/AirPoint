@@ -27,8 +27,8 @@ CAPTURE_HEIGHT = 540
 CAPTURE_FPS = 60
 INFERENCE_WIDTH = 512
 PREVIEW_WIDTH = 768
-PREVIEW_FPS = 45
-TELEMETRY_FPS = 15
+PREVIEW_FPS = 30
+TELEMETRY_FPS = 10
 
 
 class StartupActivationGate:
@@ -69,6 +69,7 @@ class StartupActivationGate:
 class CameraWorker(QThread):
     frame_ready = Signal(QImage)
     telemetry = Signal(dict)
+    gesture_changed = Signal(str)
     error = Signal(str)
     model_progress = Signal(int)
     paused_changed = Signal(bool)
@@ -365,6 +366,7 @@ class CameraWorker(QThread):
             "frame_count": 0,
             "fps": 0.0,
             "last_telemetry": 0.0,
+            "previous_gesture": None,
             "configured_revision": -1,
             "configured_screen": None,
             "screen": (0, 0, 1920, 1080),
@@ -434,6 +436,10 @@ class CameraWorker(QThread):
                     gesture = startup_label
                     paused = False
 
+                if gesture != callback_state["previous_gesture"]:
+                    self.gesture_changed.emit(gesture)
+                    callback_state["previous_gesture"] = gesture
+
                 callback_state["frame_count"] += 1
                 elapsed = now - callback_state["fps_time"]
                 if elapsed >= 0.75:
@@ -478,9 +484,9 @@ class CameraWorker(QThread):
                 base_options=BaseOptions(model_asset_path=str(model_path)),
                 running_mode=RunningMode.LIVE_STREAM,
                 num_hands=2,
-                min_hand_detection_confidence=0.48,
-                min_hand_presence_confidence=0.45,
-                min_tracking_confidence=0.50,
+                min_hand_detection_confidence=0.42,
+                min_hand_presence_confidence=0.42,
+                min_tracking_confidence=0.45,
                 result_callback=on_result,
             )
             landmarker = HandLandmarker.create_from_options(options)

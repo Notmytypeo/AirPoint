@@ -231,12 +231,23 @@ class GestureEngineTests(unittest.TestCase):
         real_contact = HandObservation("Right", tuple(image_points), tuple(world_points))
         self.assertLess(self.engine._pinch_ratio(real_contact, 8), self.engine.tuning["pinch_contact"])
 
+    def test_clear_thumb_edge_contact_is_not_blocked_by_noisy_depth(self):
+        hand = open_hand("Right")
+        image_points = list(hand.landmarks)
+        image_points[17] = Landmark(image_points[5].x + 0.02, image_points[5].y)
+        thumb = image_points[4]
+        image_points[8] = Landmark(thumb.x + 0.01, thumb.y)
+        world_points = list(hand.landmarks)
+        world_points[8] = Landmark(thumb.x + 0.01, thumb.y, 0.40)
+        thumb_edge_contact = HandObservation("Right", tuple(image_points), tuple(world_points))
+        self.assertLess(self.engine._pinch_ratio(thumb_edge_contact, 8), self.engine.tuning["pinch_contact"])
+
     def test_borderline_pinch_requires_brief_stable_confirmation(self):
         hand = open_hand("Right")
         thumb = hand.landmarks[4]
         borderline = with_point(hand, 8, thumb.x + 0.0875, thumb.y)  # ratio 0.33
         first = self.engine.process((borderline,), 1.0)
-        confirmed = self.engine.process((borderline,), 1.04)
+        confirmed = self.engine.process((borderline,), 1.02)
         self.assertNotIn("pinch_start", action_kinds(first))
         self.assertIn("pinch_start", action_kinds(confirmed))
 
@@ -295,8 +306,8 @@ class GestureEngineTests(unittest.TestCase):
         self.engine.process((hand,), 0.8)
         self.engine.process((pinched,), 1.0)
         released = self.engine.process((hand,), 1.1)
-        settling = self.engine.process((hand,), 1.149)
-        resumed = self.engine.process((hand,), 1.151)
+        settling = self.engine.process((hand,), 1.124)
+        resumed = self.engine.process((hand,), 1.126)
         self.assertNotIn("move", action_kinds(released))
         self.assertNotIn("move", action_kinds(settling))
         self.assertIn("move", action_kinds(resumed))
@@ -607,6 +618,21 @@ class GestureEngineTests(unittest.TestCase):
         hand = two_finger_hand("Left")
         self.engine.process((hand,), 1.0)
         moved = self.engine.process((shift_hand(hand, dy=-0.08),), 1.1)
+        self.assertIn("scroll", action_kinds(moved))
+
+    def test_two_finger_scroll_accepts_a_side_view_using_world_landmarks(self):
+        hand = two_finger_hand("Right")
+        image_points = list(hand.landmarks)
+        # The projected PIP/DIP joints bend when the hand is viewed from the
+        # side, while the world landmarks retain the true raised-finger pose.
+        image_points[7] = Landmark(0.55, 0.49)
+        image_points[11] = Landmark(0.65, 0.44)
+        side_view = HandObservation("Right", tuple(image_points), hand.landmarks)
+        self.engine.process((side_view,), 1.0)
+
+        moved_image = tuple(Landmark(point.x, point.y - 0.08, point.z) for point in image_points)
+        moved_world = tuple(Landmark(point.x, point.y - 0.08, point.z) for point in hand.landmarks)
+        moved = self.engine.process((HandObservation("Right", moved_image, moved_world),), 1.1)
         self.assertIn("scroll", action_kinds(moved))
 
     def test_two_finger_pose_scrolls_horizontally(self):

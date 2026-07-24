@@ -57,9 +57,38 @@ def _angle(a: Landmark, b: Landmark, c: Landmark) -> float:
     return math.degrees(math.acos(cosine))
 
 
+def _angle_3d(a: Landmark, b: Landmark, c: Landmark) -> float:
+    """Joint angle that remains reliable when the hand turns sideways."""
+    ab = (a.x - b.x, a.y - b.y, a.z - b.z)
+    cb = (c.x - b.x, c.y - b.y, c.z - b.z)
+    denominator = math.sqrt(sum(value * value for value in ab) * sum(value * value for value in cb))
+    if denominator < 1e-8:
+        return 0.0
+    cosine = max(-1.0, min(1.0, sum(first * second for first, second in zip(ab, cb)) / denominator))
+    return math.degrees(math.acos(cosine))
+
+
 def _finger_extended(points: tuple[Landmark, ...], mcp: int, pip: int, dip: int, tip: int) -> bool:
     straight = _angle(points[mcp], points[pip], points[dip]) > 145 and _angle(points[pip], points[dip], points[tip]) > 135
     reach = _distance(points[tip], points[0]) > _distance(points[pip], points[0]) * 1.08
+    return straight and reach
+
+
+def _finger_raised(
+    points: tuple[Landmark, ...],
+    mcp: int,
+    pip: int,
+    dip: int,
+    tip: int,
+    world_points: tuple[Landmark, ...] | None = None,
+) -> bool:
+    """Tolerant raised-finger test for navigation poses, including side views."""
+    angle_points = world_points if world_points is not None and len(world_points) >= 21 else points
+    straight = (
+        _angle_3d(angle_points[mcp], angle_points[pip], angle_points[dip]) > 122
+        and _angle_3d(angle_points[pip], angle_points[dip], angle_points[tip]) > 108
+    )
+    reach = _distance(points[tip], points[0]) > _distance(points[pip], points[0]) * 1.02
     return straight and reach
 
 
@@ -99,19 +128,22 @@ def is_right_click_pose(points: tuple[Landmark, ...]) -> bool:
     )
 
 
-def is_two_finger_scroll_pose(points: tuple[Landmark, ...]) -> bool:
+def is_two_finger_scroll_pose(
+    points: tuple[Landmark, ...],
+    world_points: tuple[Landmark, ...] | None = None,
+) -> bool:
     """Index and middle are raised while ring and little fingers are folded."""
     if len(points) < 21:
         return False
-    extended = (
-        _finger_extended(points, 5, 6, 7, 8),
-        _finger_extended(points, 9, 10, 11, 12),
+    raised = (
+        _finger_raised(points, 5, 6, 7, 8, world_points),
+        _finger_raised(points, 9, 10, 11, 12, world_points),
         _finger_extended(points, 13, 14, 15, 16),
         _finger_extended(points, 17, 18, 19, 20),
     )
     palm_width = max(_distance(points[5], points[17]), 0.035)
-    fingers_together = _distance(points[8], points[12]) / palm_width < 0.75
-    return extended[0] and extended[1] and not extended[2] and not extended[3] and fingers_together
+    fingers_together = _distance(points[8], points[12]) / palm_width < 1.00
+    return raised[0] and raised[1] and not raised[2] and not raised[3] and fingers_together
 
 
 def is_zoom_pinch_pose(points: tuple[Landmark, ...]) -> bool:
@@ -190,6 +222,7 @@ class GestureEngine:
                 prediction_cap=settings["prediction_cap"],
                 precision_step=settings["precision_step"],
                 precision_speed_floor=settings["precision_speed_floor"],
+                precision_release_seconds=settings["precision_release_seconds"],
                 confidence_floor=settings["pointer_confidence_floor"],
                 jump_threshold=settings["pointer_jump_threshold"],
             )
@@ -296,7 +329,16 @@ class GestureEngine:
         if hand.world_landmarks is None or len(hand.world_landmarks) < 21:
             return image_ratio
         world_ratio = self._normalized_distance(hand.world_landmarks, tip, include_depth=True)
-        blend = self.tuning["pinch_3d_blend"]
+        image_palm_width = _distance(hand.landmarks[5], hand.landmarks[17])
+        image_palm_length = _distance(hand.landmarks[0], hand.landmarks[9])
+        # A sideways hand collapses its image width, making 2D contact less
+        # dependable. MediaPipe's depth estimate can also become noisy in this
+        # pose, however, so a clearly visible fingertip contact must still be
+        # allowed through instead of making clicks impossible at thumb edge.
+        side_on = image_palm_width < max(0.035, image_palm_length * 0.62)
+        if side_on and image_ratio <= self.tuning["pinch_contact"] * 1.30:
+            return image_ratio
+        blend = min(0.55, self.tuning["pinch_3d_blend"] + (0.22 if side_on else 0.0))
         return image_ratio * (1.0 - blend) + world_ratio * blend
 
     def _stable_pinch(self, key: str, ratio: float, was_pinched: bool, timestamp: float) -> bool:
@@ -344,6 +386,21 @@ class GestureEngine:
         if len(history) < 3 and ratio <= self.tuning["pinch_deep_contact"]:
             self._pinch_candidate_since.pop(key, None)
             return True
+        # A very close contact still needs one follow-up frame once the signal
+        # is warm: this blocks isolated landmark spikes while cutting normal
+        # pinch recognition from roughly two frames to one.
+        if ratio <= self.tuning["pinch_deep_contact"]:
+            # A second close sample within the short median window is enough
+            # for an immediate response. A lone deep sample after an open hand
+            # still waits for one follow-up frame, rejecting detector spikes.
+            if sum(sample <= self.tuning["pinch_contact"] for sample in history) >= 2:
+                self._pinch_candidate_since.pop(key, None)
+                return True
+            candidate_since = self._pinch_candidate_since.setdefault(key, timestamp)
+            if timestamp - candidate_since >= 0.010:
+                self._pinch_candidate_since.pop(key, None)
+                return True
+            return False
         if ratio >= self.tuning["pinch_contact"] or filtered >= self.tuning["pinch_contact"]:
             self._pinch_candidate_since.pop(key, None)
             return False
@@ -353,7 +410,7 @@ class GestureEngine:
             self._pinch_candidate_since.pop(key, None)
             return True
         candidate_since = self._pinch_candidate_since.setdefault(key, timestamp)
-        if timestamp - candidate_since >= 0.025:
+        if timestamp - candidate_since >= 0.010:
             self._pinch_candidate_since.pop(key, None)
             return True
         return False
@@ -485,7 +542,7 @@ class GestureEngine:
         fist = raw_fist and not raw_index_thumb_contact
         support_fist = left is not None and is_fist(left.landmarks)
         both_fists = raw_fist and support_fist
-        two_finger_scroll = is_two_finger_scroll_pose(points)
+        two_finger_scroll = is_two_finger_scroll_pose(points, right.world_landmarks)
         if not two_finger_scroll:
             self._two_finger_scroll_y = None
             self._two_finger_scroll_x = None
@@ -750,7 +807,7 @@ class GestureEngine:
                     self._two_finger_scroll_y = self._two_finger_scroll_y * 0.92 + current_y * 0.08
                 else:
                     strength = min(3, 1 + int((abs(delta) - dead_zone) / 0.035))
-                    interval = {1: 0.11, 2: 0.085, 3: 0.065}[strength]
+                    interval = {1: 0.055, 2: 0.045, 3: 0.035}[strength]
                     if timestamp - self._two_finger_scroll_last_emit >= interval:
                         direction = 1 if delta > 0 else -1
                         actions.append(GestureAction("scroll_horizontal" if horizontal else "scroll", amount=direction * strength))
