@@ -42,6 +42,8 @@ class ReleaseMetadataTests(unittest.TestCase):
         requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
 
         self.assertIn("mediapipe>=0.10.21,<0.11", requirements)
+        self.assertIn("opencv-contrib-python>=4.11,<5", requirements)
+        self.assertIn("numpy>=1.26,<3", requirements)
 
 
 if __name__ == "__main__":
