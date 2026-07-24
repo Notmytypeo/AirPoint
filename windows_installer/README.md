@@ -6,7 +6,7 @@ Your camera frames stay on your PC and are never uploaded.
 
 ## 1. Download and install
 
-1. Download [AirPoint_Setup_1.2.0.exe](https://github.com/Notmytypeo/AirPoint/releases/latest/download/AirPoint_Setup_1.2.0.exe).
+1. Download [AirPoint_Setup_1.3.0.exe](https://github.com/Notmytypeo/AirPoint/releases/latest/download/AirPoint_Setup_1.3.0.exe).
 2. Double-click the downloaded file.
 3. Follow the setup steps and choose **Install**.
 4. Start AirPoint from the desktop shortcut or Start menu.

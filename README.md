@@ -8,7 +8,7 @@ You do **not** need to download the source code or install Python. Choose one op
 
 | Your computer | Download | Beginner guide |
 |---|---|---|
-| **Windows 10 or 11** | [AirPoint Windows installer (.exe)](https://github.com/Notmytypeo/AirPoint/releases/latest/download/AirPoint_Setup_1.2.0.exe) | [Windows installation guide](windows_installer/README.md) |
+| **Windows 10 or 11** | [AirPoint Windows installer (.exe)](https://github.com/Notmytypeo/AirPoint/releases/latest/download/AirPoint_Setup_1.3.0.exe) | [Windows installation guide](windows_installer/README.md) |
 | **MacBook with Apple chip** (M1, M2, M3, or M4) | [AirPoint Apple Silicon installer (.zip)](https://github.com/Notmytypeo/AirPoint/releases/latest/download/AirPoint-macOS-arm64.zip) | [macOS installation guide](mac_installer/README.md) |
 | **Older Intel MacBook** | Download `AirPoint-macOS-x86_64.zip` from the [latest release](https://github.com/Notmytypeo/AirPoint/releases/latest) when available | [macOS installation guide](mac_installer/README.md) |
 
@@ -39,7 +39,7 @@ Whenever gesture control is activated, AirPoint places the pointer at the center
 
 Open the **Developer calibration** tab to access live, persistent calibration controls. Every control has a short in-app description and safe bounds. The panel covers pointer smoothing/prediction/workspace/precision, pinch thresholds and hysteresis, click/pause/drag timing, scrolling/volume/zoom response, and swipe tabs. **Reset defaults** restores the tested baseline.
 
-Three-finger application switching is disabled by default to keep ordinary pointer tracking unchanged. Enable it in Developer calibration under **Swipes**. It uses the raw center of either hand's index, middle, and ring fingertips; the thumb and little finger must remain folded. Right/left sends Alt+Tab/Alt+Shift+Tab, up opens Windows Task View, and down shows the desktop. The Swipes controls expose all thresholds and an optional live debug readout in the camera status pill.
+Three-finger application switching is disabled by default to keep ordinary pointer tracking unchanged. Enable it in Developer calibration under **Swipes**. It uses the center of either hand's index, middle, and ring fingertips; the thumb and little finger must remain folded. Right/left sends Alt+Tab/Alt+Shift+Tab, up opens Windows Task View, and down shows the desktop. The detector scales motion thresholds from palm width, uses an outlier-resistant trajectory estimate, and tolerates one dropped pose frame. Each safeguard can be switched independently in Developer calibration, which also exposes an optional live debug readout in the camera status pill.
 
 ## Run
 
@@ -92,7 +92,7 @@ Build the versioned PyInstaller bundle and Inno Setup installer:
 .\build_installer.ps1
 ```
 
-The distributable installer is written to `installer_output\AirPoint_Setup_1.2.0.exe`. The version comes from `app/__init__.py`, and the same value is embedded in the app executable and passed into Inno Setup. The tracked `AirPoint.spec` file is required for reproducible builds; generated `build/`, `dist/`, and installer output remain excluded from Git.
+The distributable installer is written to `installer_output\AirPoint_Setup_1.3.0.exe`. The version comes from `app/__init__.py`, and the same value is embedded in the app executable and passed into Inno Setup. The tracked `AirPoint.spec` file is required for reproducible builds; generated `build/`, `dist/`, and installer output remain excluded from Git.
 
 ## Build a macOS .app bundle
 
@@ -116,7 +116,7 @@ The app bundle and distributable zip are written to `mac_installer/`. Release do
 
 - `app/camera_worker.py` — camera capture and MediaPipe tracking on a dedicated thread
 - `app/gestures.py` — gesture geometry, hysteresis, drag/pause state machine
-- `app/filters.py` — adaptive One Euro pointer smoothing
+- `app/filters.py` — adaptive One Euro pointer smoothing with reversal-aware prediction
 - `app/system_control.py` — platform dispatcher + Windows `SendInput` mouse/keyboard events
 - `app/system_control_macos.py` — macOS Quartz/CoreGraphics mouse/keyboard events
 - `app/application.py` — Qt desktop interface

@@ -24,12 +24,14 @@ class TuningTests(unittest.TestCase):
         tuning = normalized_tuning({
             "pointer_dead_zone": 0.01,
             "prediction_frames": 0.4,
+            "prediction_reversal_guard": 0.0,
             "precision_step": 0.008,
             "precision_release_seconds": 0.12,
         })
         engine.configure(1.0, (0, 0, 1920, 1080), tuning=tuning)
         self.assertEqual(engine._filter.dead_zone, 0.01)
         self.assertEqual(engine._filter.lookahead_frames, 0.4)
+        self.assertFalse(engine._filter.prediction_reversal_guard)
         self.assertEqual(engine._filter.precision_step, 0.008)
         self.assertEqual(engine._filter.precision_release_seconds, 0.12)
 

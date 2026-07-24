@@ -225,6 +225,7 @@ class GestureEngine:
                 precision_release_seconds=settings["precision_release_seconds"],
                 confidence_floor=settings["pointer_confidence_floor"],
                 jump_threshold=settings["pointer_jump_threshold"],
+                prediction_reversal_guard=settings["prediction_reversal_guard"] >= 0.5,
             )
 
     def configure(

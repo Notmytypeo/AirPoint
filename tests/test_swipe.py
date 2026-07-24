@@ -25,6 +25,27 @@ def move_three_fingers(points, dx=0.0, dy=0.0):
     return tuple(moved)
 
 
+def scale_hand(points, factor):
+    wrist = points[0]
+    return tuple(
+        Landmark(
+            wrist.x + (point.x - wrist.x) * factor,
+            wrist.y + (point.y - wrist.y) * factor,
+            point.z * factor,
+        )
+        for point in points
+    )
+
+
+def open_little_finger(points):
+    opened = list(points)
+    mcp = points[17]
+    opened[18] = Landmark(mcp.x, mcp.y - 0.14)
+    opened[19] = Landmark(mcp.x + 0.01, mcp.y - 0.28)
+    opened[20] = Landmark(mcp.x + 0.02, mcp.y - 0.42)
+    return tuple(opened)
+
+
 class SwipeDetectorTests(unittest.TestCase):
     def setUp(self):
         self.detector = ThreeFingerSwipeDetector()
@@ -73,6 +94,79 @@ class SwipeDetectorTests(unittest.TestCase):
         fired = self._frame(0.12, dx=0.07, dy=-0.15)
         self.assertEqual(tracking.state, SwipeState.TRACKING)
         self.assertEqual(fired.direction, "up")
+
+    def test_scale_adaptation_keeps_a_farther_hand_swipe_usable(self):
+        far_points = scale_hand(self.points, 0.5)
+
+        def run(adaptive):
+            detector = ThreeFingerSwipeDetector()
+            tuning = normalized_tuning({
+                "swipe_enabled": 1.0,
+                "swipe_scale_adaptation": adaptive,
+            })
+            result = None
+            frames = (
+                (0.00, 0.0),
+                (0.03, 0.007),
+                (0.06, 0.014),
+                (0.09, 0.045),
+                (0.12, 0.075),
+            )
+            for timestamp, dx in frames:
+                result = detector.process(
+                    move_three_fingers(far_points, dx=dx),
+                    timestamp,
+                    pinch_active=False,
+                    tuning=tuning,
+                )
+            return result
+
+        self.assertEqual(run(1.0).direction, "right")
+        self.assertEqual(run(0.0).direction, "")
+
+    def test_swipe_timing_is_consistent_at_15_30_and_60_fps(self):
+        for fps in (15, 30, 60):
+            with self.subTest(fps=fps):
+                detector = ThreeFingerSwipeDetector()
+                frame_count = round(0.20 * fps)
+                direction = ""
+                for frame in range(frame_count + 1):
+                    progress = frame / frame_count
+                    result = detector.process(
+                        move_three_fingers(self.points, dx=0.15 * progress),
+                        frame / fps,
+                        pinch_active=False,
+                        tuning=self.tuning,
+                    )
+                    direction = result.direction or direction
+                self.assertEqual(direction, "right")
+
+    def test_robust_trajectory_rejects_one_large_landmark_spike(self):
+        for timestamp, dx in ((0.00, 0.0), (0.03, 0.005), (0.06, 0.010), (0.09, 0.015)):
+            self._frame(timestamp, dx=dx)
+        spike = self._frame(0.12, dx=0.20)
+        self.assertNotEqual(spike.state, SwipeState.FIRED)
+        self.assertEqual(spike.direction, "")
+
+    def test_one_pose_dropout_does_not_cancel_an_active_swipe(self):
+        self.assertEqual(self._arm_and_track().state, SwipeState.TRACKING)
+        dropout = self.detector.process(
+            open_little_finger(move_three_fingers(self.points, dx=0.09)),
+            0.10,
+            pinch_active=False,
+            tuning=self.tuning,
+        )
+        fired = self._frame(0.12, dx=0.15)
+        self.assertEqual(dropout.state, SwipeState.TRACKING)
+        self.assertEqual(fired.direction, "right")
+
+    def test_pose_grace_is_bounded_to_one_frame_by_default(self):
+        self.assertEqual(self._arm_and_track().state, SwipeState.TRACKING)
+        invalid = open_little_finger(move_three_fingers(self.points, dx=0.09))
+        first = self.detector.process(invalid, 0.10, pinch_active=False, tuning=self.tuning)
+        second = self.detector.process(invalid, 0.11, pinch_active=False, tuning=self.tuning)
+        self.assertEqual(first.state, SwipeState.TRACKING)
+        self.assertEqual(second.state, SwipeState.IDLE)
 
     def test_pinch_and_diagonal_motion_cancel_the_gesture(self):
         self._frame(0.00)
