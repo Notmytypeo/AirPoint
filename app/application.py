@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from .camera_worker import CameraWorker
+from .startup import is_startup_enabled, set_startup_enabled, startup_supported
 from .styles import APP_STYLE
 from .system_control import disable_background_throttling
 from .tuning import DEVELOPER_PARAMETERS, normalized_tuning
@@ -216,6 +217,7 @@ class MainWindow(QMainWindow):
         self._developer_tuning = normalized_tuning()
         self._developer_inputs: dict[str, QDoubleSpinBox | QCheckBox] = {}
         self._focus_updating = False
+        self._startup_updating = False
         self._last_hand_state: tuple[bool, bool] | None = None
 
         root = QWidget()
@@ -260,6 +262,9 @@ class MainWindow(QMainWindow):
         self.manual_focus.setValue(saved_focus)
         self.focus_lock.setChecked(saved_focus_lock)
         self._focus_updating = False
+        self._startup_updating = True
+        self.launch_at_startup.setChecked(is_startup_enabled())
+        self._startup_updating = False
         self._refresh_focus_controls()
         self._sensitivity_changed(saved_sensitivity)
         self.worker.set_camera(self.camera_select.currentIndex())
@@ -676,6 +681,14 @@ class MainWindow(QMainWindow):
         focus_row.addStretch()
         layout.addLayout(focus_row)
 
+        self.launch_at_startup = QCheckBox("Launch at startup")
+        self.launch_at_startup.setToolTip("Start AirPoint minimized when you sign in to Windows")
+        self.launch_at_startup.setEnabled(startup_supported())
+        if not startup_supported():
+            self.launch_at_startup.setToolTip("Launch at startup is currently available on Windows only")
+        self.launch_at_startup.toggled.connect(self._launch_at_startup_changed)
+        layout.addWidget(self.launch_at_startup)
+
         manual_row = QHBoxLayout()
         manual_row.setSpacing(12)
         manual_row.addWidget(label("Manual focus", "muted"))
@@ -1010,6 +1023,18 @@ class MainWindow(QMainWindow):
     def _manual_focus_changed(self, _value: int) -> None:
         if not self._focus_updating:
             self._push_focus_settings()
+
+    def _launch_at_startup_changed(self, checked: bool) -> None:
+        if self._startup_updating:
+            return
+        try:
+            set_startup_enabled(checked)
+        except OSError as exc:
+            self._startup_updating = True
+            self.launch_at_startup.setChecked(is_startup_enabled())
+            self._startup_updating = False
+            self.error_text.setText(f"Could not update launch at startup: {exc}")
+            self.error_frame.show()
 
     def _focus_locked_by_camera(self, value: int) -> None:
         self._focus_updating = True

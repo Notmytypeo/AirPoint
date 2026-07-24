@@ -65,6 +65,7 @@ exe = EXE(
     exclude_binaries=True,
     name="AirPoint",
     icon=os.path.join("app", "assets", "airpoint-logo.ico"),
+    version=os.environ.get("AIRPOINT_VERSION_FILE"),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
