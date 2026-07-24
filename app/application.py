@@ -99,6 +99,103 @@ class GestureRow(QFrame):
         self.hint_label.setText(hint)
 
 
+class GestureStatusOverlay(QLabel):
+    """Click-through gesture badge anchored over the primary taskbar."""
+
+    LEFT_MARGIN = 14
+    BOTTOM_MARGIN = 10
+    TOPMOST_REFRESH_MS = 200
+
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self.setWindowFlags(
+            Qt.Tool
+            | Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint
+            | Qt.WindowDoesNotAcceptFocus
+            | Qt.WindowTransparentForInput
+        )
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAlignment(Qt.AlignCenter)
+        self.setFixedHeight(28)
+        self.setStyleSheet(
+            """
+            QLabel {
+                background: #1E1B4B;
+                border: 1px solid rgba(99, 102, 241, 0.65);
+                border-radius: 8px;
+                padding: 0 14px;
+                color: #C7D2FE;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            """
+        )
+        self.set_status(text)
+
+        app = QApplication.instance()
+        if app is not None:
+            app.primaryScreenChanged.connect(self._reposition)
+            app.applicationStateChanged.connect(self._keep_on_top)
+
+        # Windows Explorer periodically promotes the taskbar within the
+        # topmost-window band when focus changes. Refreshing our no-activate
+        # z-order keeps the badge visible without intercepting user input.
+        self._topmost_timer = QTimer(self)
+        self._topmost_timer.setInterval(self.TOPMOST_REFRESH_MS)
+        self._topmost_timer.timeout.connect(self._keep_on_top)
+        self._topmost_timer.start()
+
+    @classmethod
+    def target_position(cls, screen_geometry, badge_size):
+        """Return the bottom-left taskbar position used by the status badge."""
+        return (
+            screen_geometry.left() + cls.LEFT_MARGIN,
+            screen_geometry.bottom() - cls.BOTTOM_MARGIN - badge_size.height() + 1,
+        )
+
+    def set_status(self, text: str) -> None:
+        if self.text() != text:
+            super().setText(text)
+            self.adjustSize()
+        self._reposition()
+
+    def _reposition(self, *_args) -> None:
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+        x, y = self.target_position(screen.geometry(), self.size())
+        self.move(x, y)
+
+    def _keep_on_top(self, *_args) -> None:
+        if not self.isVisible():
+            return
+        self._reposition()
+        self.raise_()
+        if sys.platform == "win32":
+            # HWND_TOPMOST plus SWP_NOACTIVATE keeps the badge above the
+            # taskbar without pulling focus away from the current app.
+            try:
+                import ctypes
+
+                ctypes.windll.user32.SetWindowPos(
+                    ctypes.c_void_p(int(self.winId())),
+                    ctypes.c_void_p(-1),
+                    0,
+                    0,
+                    0,
+                    0,
+                    0x0001 | 0x0002 | 0x0010 | 0x0040 | 0x0200,
+                )
+            except (AttributeError, OSError):
+                pass
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._keep_on_top()
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -130,10 +227,13 @@ class MainWindow(QMainWindow):
 
         outer.addWidget(self._build_content(), 1)
         self._apply_theme()
+        self.gesture_overlay = GestureStatusOverlay(self.gesture_status.text())
+        self.gesture_overlay.show()
 
         self.worker = CameraWorker()
         self.worker.frame_ready.connect(self.camera_view.set_frame)
         self.worker.telemetry.connect(self._update_telemetry)
+        self.worker.gesture_changed.connect(self._gesture_changed)
         self.worker.error.connect(self._show_error)
         self.worker.model_progress.connect(self._model_progress)
         self.worker.paused_changed.connect(self._paused_changed)
@@ -943,9 +1043,7 @@ class MainWindow(QMainWindow):
                 widget.style().unpolish(widget)
                 widget.style().polish(widget)
 
-        gesture = str(data["gesture"])
-        if self.gesture_status.text() != gesture:
-            self.gesture_status.setText(gesture)
+        self._set_gesture_status(str(data["gesture"]))
         fps_text = f"{data['fps']:.0f} FPS" if data["fps"] else "WARMING UP"
         if self.fps_label.text() != fps_text:
             self.fps_label.setText(fps_text)
@@ -954,6 +1052,15 @@ class MainWindow(QMainWindow):
         self._last_paused = paused
         self._update_activate_style()
 
+    def _gesture_changed(self, gesture: str) -> None:
+        self._set_gesture_status(gesture)
+
+    def _set_gesture_status(self, gesture: str) -> None:
+        if self.gesture_status.text() != gesture:
+            self.gesture_status.setText(gesture)
+        if self.gesture_overlay.text() != gesture:
+            self.gesture_overlay.set_status(gesture)
+
     def _show_error(self, message: str) -> None:
         self.error_text.setText(message)
         self.error_frame.show()
@@ -961,13 +1068,14 @@ class MainWindow(QMainWindow):
     def _model_progress(self, value: int) -> None:
         self.download_progress.show()
         self.download_progress.setValue(value)
-        self.gesture_status.setText(f"Preparing hand model · {value}%")
+        self._set_gesture_status(f"Preparing hand model · {value}%")
         if value >= 100:
             self.download_progress.hide()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.control_active = False
         self.worker.set_enabled(False)
+        self.gesture_overlay.close()
         self.worker.stop()
         event.accept()
 

@@ -69,6 +69,7 @@ class StartupActivationGate:
 class CameraWorker(QThread):
     frame_ready = Signal(QImage)
     telemetry = Signal(dict)
+    gesture_changed = Signal(str)
     error = Signal(str)
     model_progress = Signal(int)
     paused_changed = Signal(bool)
@@ -365,6 +366,7 @@ class CameraWorker(QThread):
             "frame_count": 0,
             "fps": 0.0,
             "last_telemetry": 0.0,
+            "previous_gesture": None,
             "configured_revision": -1,
             "configured_screen": None,
             "screen": (0, 0, 1920, 1080),
@@ -433,6 +435,10 @@ class CameraWorker(QThread):
                 else:
                     gesture = startup_label
                     paused = False
+
+                if gesture != callback_state["previous_gesture"]:
+                    self.gesture_changed.emit(gesture)
+                    callback_state["previous_gesture"] = gesture
 
                 callback_state["frame_count"] += 1
                 elapsed = now - callback_state["fps_time"]
