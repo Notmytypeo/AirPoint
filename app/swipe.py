@@ -127,9 +127,11 @@ class ThreeFingerSwipeDetector:
         horizontal_valid = abs(dy) <= tuning["swipe_vertical_tolerance"]
         vertical_valid = abs(dx) <= tuning["swipe_horizontal_tolerance"]
         if self.state == SwipeState.ARMED:
-            if abs(dx) >= tuning["swipe_arm_distance"] and horizontal_valid:
+            absolute_dx = abs(dx)
+            absolute_dy = abs(dy)
+            if absolute_dx >= absolute_dy and absolute_dx >= tuning["swipe_arm_distance"] and horizontal_valid:
                 self.state, self._axis = SwipeState.TRACKING, "horizontal"
-            elif abs(dy) >= tuning["swipe_arm_distance"] and vertical_valid:
+            elif absolute_dy > absolute_dx and absolute_dy >= tuning["swipe_arm_distance"] and vertical_valid:
                 self.state, self._axis = SwipeState.TRACKING, "vertical"
             elif timestamp - self._armed_at > tuning["swipe_window_seconds"] * 1.5:
                 self.reset()

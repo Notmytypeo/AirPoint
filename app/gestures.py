@@ -625,6 +625,17 @@ class GestureEngine:
                 {"right": "Next application", "left": "Previous application", "up": "Task View", "down": "Show desktop"}[swipe_result.direction]
             )
             return GestureFrame(tuple(actions), gesture, True, left is not None, False)
+        dominant_swipe_active = self._swipes[dominant_name.lower()].state in (
+            SwipeState.ARMED,
+            SwipeState.TRACKING,
+        )
+        if dominant_swipe_active:
+            self._index_pinched = False
+            self._middle_pinched = False
+            self._left_index_pinched = left_index_now
+            self._pointer_resume_at = timestamp + self.tuning["gesture_settle_delay"]
+            gesture = swipe_debug or "Three-finger swipe · move up, down, left, or right"
+            return GestureFrame(tuple(actions), gesture, True, left is not None, False)
 
         both_index_pinched = left is not None and index_now and left_index_now
         both_zoom_ready = (

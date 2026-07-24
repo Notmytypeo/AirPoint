@@ -145,9 +145,11 @@ class GestureEngineTests(unittest.TestCase):
 
     def test_dominant_three_finger_swipe_switches_applications(self):
         self.engine.configure(1.0, (0, 0, 1920, 1080), tuning={"swipe_enabled": 1.0})
+        frames = []
         for timestamp, dx in ((1.00, 0.0), (1.03, 0.01), (1.06, 0.02), (1.09, 0.07)):
-            self.engine.process((three_finger_swipe_hand("Right", dx=dx),), timestamp)
+            frames.append(self.engine.process((three_finger_swipe_hand("Right", dx=dx),), timestamp))
         frame = self.engine.process((three_finger_swipe_hand("Right", dx=0.15),), 1.12)
+        self.assertTrue(all("move" not in action_kinds(item) for item in frames))
         self.assertIn("app_next", action_kinds(frame))
 
     def test_pointer_reaches_screen_edges_from_compact_hand_workspace(self):

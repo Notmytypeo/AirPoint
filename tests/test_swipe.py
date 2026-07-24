@@ -65,6 +65,15 @@ class SwipeDetectorTests(unittest.TestCase):
         down = self._frame(0.12, dy=0.15)
         self.assertEqual(down.direction, "down")
 
+    def test_vertical_swipe_uses_the_larger_axis_when_both_cross_arm_distance(self):
+        self._frame(0.00)
+        self._frame(0.03, dx=0.01, dy=-0.02)
+        self._frame(0.06, dx=0.02, dy=-0.04)
+        tracking = self._frame(0.09, dx=0.065, dy=-0.08)
+        fired = self._frame(0.12, dx=0.07, dy=-0.15)
+        self.assertEqual(tracking.state, SwipeState.TRACKING)
+        self.assertEqual(fired.direction, "up")
+
     def test_pinch_and_diagonal_motion_cancel_the_gesture(self):
         self._frame(0.00)
         cancelled = self._frame(0.03, pinch_active=True)
