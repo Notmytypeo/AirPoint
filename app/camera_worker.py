@@ -153,6 +153,18 @@ class CameraWorker(QThread):
         self.wait(2500)
 
     @staticmethod
+    def _enable_windows_auto_exposure(capture, cv2) -> bool:
+        """Restore DirectShow's driver-managed exposure after camera probing.
+
+        DirectShow represents automatic exposure as 0.75. Unsupported cameras
+        simply reject the property, so failure is safe and non-fatal.
+        """
+        try:
+            return bool(capture.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75))
+        except Exception:
+            return False
+
+    @staticmethod
     def _to_hands(result, swap_hands: bool = False) -> tuple[HandObservation, ...]:
         if not result or not hasattr(result, "hand_landmarks"):
             return ()
@@ -513,9 +525,11 @@ class CameraWorker(QThread):
                         capture.release()
                     _backend = cv2.CAP_AVFOUNDATION if platform.system() == "Darwin" else cv2.CAP_DSHOW
                     capture = cv2.VideoCapture(camera_index, _backend)
+                    using_windows_dshow = platform.system() == "Windows" and capture.isOpened()
                     if not capture.isOpened():
                         capture.release()
                         capture = cv2.VideoCapture(camera_index)
+                        using_windows_dshow = False
                     # MJPEG avoids the low-FPS uncompressed mode many Windows
                     # webcams select at HD resolutions.
                     capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -523,6 +537,8 @@ class CameraWorker(QThread):
                     capture.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_WIDTH)
                     capture.set(cv2.CAP_PROP_FRAME_HEIGHT, CAPTURE_HEIGHT)
                     capture.set(cv2.CAP_PROP_FPS, CAPTURE_FPS)
+                    if using_windows_dshow:
+                        self._enable_windows_auto_exposure(capture, cv2)
                     active_camera = camera_index
                     applied_focus_revision = -1
                     with result_lock:

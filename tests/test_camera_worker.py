@@ -19,6 +19,28 @@ def duplicate_handedness_result():
 
 
 class CameraWorkerTests(unittest.TestCase):
+    def test_windows_auto_exposure_uses_directshow_automatic_mode(self):
+        class Capture:
+            def __init__(self):
+                self.calls = []
+
+            def set(self, property_id, value):
+                self.calls.append((property_id, value))
+                return True
+
+        capture = Capture()
+        cv2 = SimpleNamespace(CAP_PROP_AUTO_EXPOSURE=21)
+        self.assertTrue(CameraWorker._enable_windows_auto_exposure(capture, cv2))
+        self.assertEqual(capture.calls, [(21, 0.75)])
+
+    def test_unsupported_auto_exposure_is_non_fatal(self):
+        class Capture:
+            def set(self, _property_id, _value):
+                raise ValueError("unsupported")
+
+        cv2 = SimpleNamespace(CAP_PROP_AUTO_EXPOSURE=21)
+        self.assertFalse(CameraWorker._enable_windows_auto_exposure(Capture(), cv2))
+
     def test_focus_lock_forces_manual_focus_and_clamps_its_value(self):
         worker = CameraWorker()
         worker.set_focus(True, 999, True)
