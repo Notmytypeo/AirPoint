@@ -38,6 +38,11 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIn("runner: macos-15-intel", workflow)
         self.assertNotIn("runner: macos-13", workflow)
 
+    def test_requirements_support_intel_macos_mediapipe(self):
+        requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+
+        self.assertIn("mediapipe>=0.10.21,<0.11", requirements)
+
 
 if __name__ == "__main__":
     unittest.main()
