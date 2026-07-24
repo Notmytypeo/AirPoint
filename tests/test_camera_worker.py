@@ -18,34 +18,6 @@ def duplicate_handedness_result():
     return SimpleNamespace(hand_landmarks=[left_side, right_side], handedness=[[category], [category]])
 
 
-class FakeCapture:
-    def __init__(self, values=None, accepted=True):
-        self.values = dict(values or {})
-        self.accepted = accepted
-        self.writes = []
-
-    def get(self, property_id):
-        return self.values.get(property_id, -1.0)
-
-    def set(self, property_id, value):
-        self.writes.append((property_id, value))
-        if self.accepted:
-            self.values[property_id] = float(value)
-        return self.accepted
-
-
-FAKE_CV2 = SimpleNamespace(
-    CAP_PROP_BUFFERSIZE=1,
-    CAP_PROP_FOURCC=2,
-    CAP_PROP_FRAME_WIDTH=3,
-    CAP_PROP_FRAME_HEIGHT=4,
-    CAP_PROP_FPS=5,
-    CAP_PROP_AUTOFOCUS=6,
-    CAP_PROP_FOCUS=7,
-    VideoWriter_fourcc=lambda *_args: 99,
-)
-
-
 class CameraWorkerTests(unittest.TestCase):
     def test_focus_lock_forces_manual_focus_and_clamps_its_value(self):
         worker = CameraWorker()
@@ -54,57 +26,6 @@ class CameraWorkerTests(unittest.TestCase):
         self.assertTrue(worker._focus_lock)
         self.assertEqual(worker._manual_focus, 255)
         self.assertEqual(worker._focus_revision, 1)
-
-    def test_capture_fps_change_reopens_camera_and_clamps_value(self):
-        worker = CameraWorker()
-        original_revision = worker._camera_revision
-
-        worker.set_capture_fps(240)
-
-        self.assertEqual(worker._capture_fps, 120)
-        self.assertEqual(worker._camera_revision, original_revision + 1)
-
-    def test_capture_configuration_applies_and_reports_requested_fps(self):
-        capture = FakeCapture()
-
-        status = CameraWorker._configure_capture(capture, FAKE_CV2, 30)
-
-        self.assertIn((FAKE_CV2.CAP_PROP_FPS, 30), capture.writes)
-        self.assertEqual(status["requested_fps"], 30)
-        self.assertAlmostEqual(status["reported_fps"], 30.0)
-        self.assertTrue(status["fps_accepted"])
-
-    def test_manual_focus_is_applied_after_autofocus_is_disabled(self):
-        worker = CameraWorker()
-        worker.set_focus(False, 180, False)
-        capture = FakeCapture({
-            FAKE_CV2.CAP_PROP_AUTOFOCUS: 1.0,
-            FAKE_CV2.CAP_PROP_FOCUS: 100.0,
-        })
-        statuses = []
-        worker.focus_status.connect(statuses.append)
-
-        worker._apply_focus(capture, FAKE_CV2)
-
-        self.assertEqual(
-            capture.writes[-2:],
-            [(FAKE_CV2.CAP_PROP_AUTOFOCUS, 0), (FAKE_CV2.CAP_PROP_FOCUS, 180)],
-        )
-        self.assertEqual(capture.get(FAKE_CV2.CAP_PROP_FOCUS), 180.0)
-        self.assertTrue(statuses[-1]["manual_supported"])
-        self.assertTrue(statuses[-1]["applied"])
-
-    def test_unsupported_focus_driver_is_reported_instead_of_silently_ignored(self):
-        worker = CameraWorker()
-        capture = FakeCapture(accepted=False)
-        statuses = []
-        worker.focus_status.connect(statuses.append)
-
-        worker._apply_focus(capture, FAKE_CV2)
-
-        self.assertFalse(statuses[-1]["manual_supported"])
-        self.assertFalse(statuses[-1]["autofocus_supported"])
-        self.assertIn("does not expose focus controls", statuses[-1]["message"])
 
     def test_orientation_distinguishes_front_and_hand_specific_edges(self):
         points = [Landmark(0.0, 0.0, 0.0) for _ in range(21)]

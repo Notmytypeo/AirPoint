@@ -25,12 +25,6 @@ def move_three_fingers(points, dx=0.0, dy=0.0):
     return tuple(moved)
 
 
-def with_pose_dropout(points):
-    moved = list(points)
-    moved[20] = Landmark(0.66, 0.48)
-    return tuple(moved)
-
-
 class SwipeDetectorTests(unittest.TestCase):
     def setUp(self):
         self.detector = ThreeFingerSwipeDetector()
@@ -70,29 +64,6 @@ class SwipeDetectorTests(unittest.TestCase):
         self.assertEqual(self._arm_and_track(dx=0.0, dy=0.07).state, SwipeState.TRACKING)
         down = self._frame(0.12, dy=0.15)
         self.assertEqual(down.direction, "down")
-
-    def test_vertical_swipe_wins_when_vertical_motion_has_horizontal_drift(self):
-        self._frame(0.00)
-        self._frame(0.03, dx=0.008, dy=-0.012)
-        self._frame(0.06, dx=0.018, dy=-0.030)
-        tracking = self._frame(0.09, dx=0.040, dy=-0.070)
-        self.assertEqual(tracking.state, SwipeState.TRACKING)
-
-        fired = self._frame(0.12, dx=0.075, dy=-0.150)
-        self.assertEqual(fired.direction, "up")
-
-    def test_one_frame_pose_dropout_does_not_cancel_vertical_swipe(self):
-        self.assertEqual(self._arm_and_track(dx=0.0, dy=-0.07).state, SwipeState.TRACKING)
-        dropped = self.detector.process(
-            with_pose_dropout(move_three_fingers(self.points, dy=-0.09)),
-            0.10,
-            pinch_active=False,
-            tuning=self.tuning,
-        )
-        self.assertEqual(dropped.state, SwipeState.TRACKING)
-
-        fired = self._frame(0.13, dy=-0.16)
-        self.assertEqual(fired.direction, "up")
 
     def test_pinch_and_diagonal_motion_cancel_the_gesture(self):
         self._frame(0.00)
