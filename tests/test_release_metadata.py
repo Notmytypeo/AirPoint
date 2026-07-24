@@ -32,6 +32,12 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertNotIn("AirPoint_Setup_1.0.0.exe", workflow)
         self.assertIsNone(re.search(r"AirPoint_Setup_\d+\.\d+\.\d+\.exe", workflow))
 
+    def test_macos_workflow_uses_supported_intel_runner(self):
+        workflow = (ROOT / ".github/workflows/macos-installer.yml").read_text(encoding="utf-8")
+
+        self.assertIn("runner: macos-15-intel", workflow)
+        self.assertNotIn("runner: macos-13", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()
