@@ -46,6 +46,7 @@ To pause control, hold **both fists** for about a second. While paused, hold the
 ## Troubleshooting
 
 - **No camera preview:** check the Camera settings above and close other apps using the camera.
+- **Manual focus says N/A:** the camera driver does not expose focus to AirPoint. Try **Camera controls…** in Camera preferences for the driver's native options.
 - **Cursor moves unexpectedly:** pause AirPoint with both fists, then adjust lighting or hand distance before resuming.
 - **AirPoint will not start:** reinstall it from the installer download and restart Windows if necessary.
 

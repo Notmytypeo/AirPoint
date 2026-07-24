@@ -217,6 +217,8 @@ class MainWindow(QMainWindow):
         self._developer_tuning = normalized_tuning()
         self._developer_inputs: dict[str, QDoubleSpinBox | QCheckBox] = {}
         self._focus_updating = False
+        self._focus_supported: bool | None = None
+        self._autofocus_supported: bool | None = None
         self._startup_updating = False
         self._last_hand_state: tuple[bool, bool] | None = None
 
@@ -241,9 +243,12 @@ class MainWindow(QMainWindow):
         self.worker.paused_changed.connect(self._paused_changed)
         self.worker.startup_activated.connect(self._startup_gesture_activated)
         self.worker.focus_locked.connect(self._focus_locked_by_camera)
+        self.worker.focus_status.connect(self._focus_status_changed)
+        self.worker.camera_configuration.connect(self._camera_configuration_changed)
 
         saved_sensitivity = int(self.settings.value("sensitivity", 100))
         saved_camera = int(self.settings.value("camera", 0))
+        saved_camera_fps = int(self.settings.value("camera_fps", 60))
         saved_swap_value = self.settings.value("swap_hands", True)
         saved_swap = saved_swap_value if isinstance(saved_swap_value, bool) else str(saved_swap_value).lower() == "true"
         saved_left_value = self.settings.value("left_handed", False)
@@ -255,6 +260,8 @@ class MainWindow(QMainWindow):
         saved_focus_lock = saved_focus_lock_value if isinstance(saved_focus_lock_value, bool) else str(saved_focus_lock_value).lower() == "true"
         self.sensitivity.setValue(saved_sensitivity)
         self.camera_select.setCurrentIndex(max(0, min(2, saved_camera)))
+        saved_fps_index = self.camera_fps_select.findData(saved_camera_fps)
+        self.camera_fps_select.setCurrentIndex(max(0, saved_fps_index))
         self.swap_hands.setChecked(saved_swap)
         self.left_handed.setChecked(saved_left)
         self._focus_updating = True
@@ -268,6 +275,7 @@ class MainWindow(QMainWindow):
         self._refresh_focus_controls()
         self._sensitivity_changed(saved_sensitivity)
         self.worker.set_camera(self.camera_select.currentIndex())
+        self.worker.set_capture_fps(int(self.camera_fps_select.currentData()))
         self.worker.set_swap_hands(saved_swap)
         self.worker.set_left_handed(saved_left)
         self.worker.set_focus(self.autofocus.isChecked(), self.manual_focus.value(), self.focus_lock.isChecked())
@@ -654,6 +662,20 @@ class MainWindow(QMainWindow):
         self.camera_select.setMinimumWidth(112)
         self.camera_select.currentIndexChanged.connect(self._camera_changed)
         top.addWidget(self.camera_select)
+        top.addWidget(label("FPS", "muted"))
+        self.camera_fps_select = QComboBox()
+        for fps_label, fps_value in (
+            ("Auto", 0),
+            ("15", 15),
+            ("24", 24),
+            ("30", 30),
+            ("60", 60),
+        ):
+            self.camera_fps_select.addItem(fps_label, fps_value)
+        self.camera_fps_select.setMinimumWidth(76)
+        self.camera_fps_select.setToolTip("Requested camera capture rate")
+        self.camera_fps_select.currentIndexChanged.connect(self._camera_fps_changed)
+        top.addWidget(self.camera_fps_select)
         layout.addLayout(top)
         preferences = QHBoxLayout()
         preferences.setSpacing(16)
@@ -704,6 +726,21 @@ class MainWindow(QMainWindow):
         self.focus_value.setFixedWidth(42)
         manual_row.addWidget(self.focus_value)
         layout.addLayout(manual_row)
+
+        focus_status_row = QHBoxLayout()
+        focus_status_row.setSpacing(10)
+        self.focus_status_text = label("Checking camera focus support…", "muted")
+        self.focus_status_text.setWordWrap(True)
+        focus_status_row.addWidget(self.focus_status_text, 1)
+        self.camera_controls_button = QPushButton("Camera controls…")
+        self.camera_controls_button.setToolTip("Open the camera driver's native settings on Windows")
+        self.camera_controls_button.setEnabled(sys.platform == "win32")
+        self.camera_controls_button.clicked.connect(self._open_camera_controls)
+        focus_status_row.addWidget(self.camera_controls_button)
+        layout.addLayout(focus_status_row)
+
+        self.camera_fps_status = label("Camera FPS will be checked when capture starts.", "muted")
+        layout.addWidget(self.camera_fps_status)
         return card
 
     def _build_sensitivity_card(self) -> QFrame:
@@ -976,6 +1013,27 @@ class MainWindow(QMainWindow):
         self.camera_view.setText("Connecting to camera…")
         self.error_frame.hide()
 
+    def _camera_fps_changed(self, _index: int) -> None:
+        fps = int(self.camera_fps_select.currentData())
+        self.settings.setValue("camera_fps", fps)
+        self.camera_fps_status.setText("Reconnecting with the selected camera FPS…")
+        if hasattr(self, "worker"):
+            self.worker.set_capture_fps(fps)
+
+    def _camera_configuration_changed(self, data: dict) -> None:
+        requested = int(data.get("requested_fps", 0))
+        reported = float(data.get("reported_fps", 0.0))
+        accepted = bool(data.get("fps_accepted", False))
+        requested_text = "Auto" if requested == 0 else f"{requested} FPS"
+        if reported > 0.0:
+            self.camera_fps_status.setText(
+                f"Requested {requested_text} · camera reports {reported:.0f} FPS"
+            )
+        elif requested > 0 and not accepted:
+            self.camera_fps_status.setText(f"The camera rejected {requested_text}; using its default rate.")
+        else:
+            self.camera_fps_status.setText(f"Requested {requested_text} · driver did not report its rate")
+
     def _sensitivity_changed(self, value: int) -> None:
         amount = value / 100.0
         self.sensitivity_value.setText(f"{amount:.2f}×")
@@ -991,8 +1049,15 @@ class MainWindow(QMainWindow):
     def _refresh_focus_controls(self) -> None:
         locked = self.focus_lock.isChecked()
         automatic = self.autofocus.isChecked()
-        self.manual_focus.setEnabled(not automatic and not locked)
-        self.focus_value.setText("LOCK" if locked else str(self.manual_focus.value()))
+        manual_available = self._focus_supported is not False
+        autofocus_available = self._autofocus_supported is not False
+        self.autofocus.setEnabled(autofocus_available)
+        self.focus_lock.setEnabled(manual_available)
+        self.manual_focus.setEnabled(manual_available and not automatic and not locked)
+        if not manual_available:
+            self.focus_value.setText("N/A")
+        else:
+            self.focus_value.setText("LOCK" if locked else str(self.manual_focus.value()))
 
     def _push_focus_settings(self) -> None:
         self.settings.setValue("autofocus", self.autofocus.isChecked())
@@ -1023,6 +1088,19 @@ class MainWindow(QMainWindow):
     def _manual_focus_changed(self, _value: int) -> None:
         if not self._focus_updating:
             self._push_focus_settings()
+
+    def _open_camera_controls(self) -> None:
+        if hasattr(self, "worker"):
+            self.worker.request_camera_settings()
+
+    def _focus_status_changed(self, data: dict) -> None:
+        self._focus_supported = bool(data.get("manual_supported", False))
+        self._autofocus_supported = bool(data.get("autofocus_supported", False))
+        message = str(data.get("message", "Camera focus status is unavailable."))
+        if not self._focus_supported and sys.platform == "win32":
+            message += " Try Camera controls for driver-specific options."
+        self.focus_status_text.setText(message)
+        self._refresh_focus_controls()
 
     def _launch_at_startup_changed(self, checked: bool) -> None:
         if self._startup_updating:

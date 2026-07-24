@@ -75,6 +75,8 @@ class CameraWorker(QThread):
     paused_changed = Signal(bool)
     startup_activated = Signal()
     focus_locked = Signal(int)
+    focus_status = Signal(dict)
+    camera_configuration = Signal(dict)
 
     def __init__(self) -> None:
         super().__init__()
@@ -98,6 +100,9 @@ class CameraWorker(QThread):
         self._manual_focus = 128
         self._focus_lock = False
         self._focus_revision = 0
+        self._capture_fps = CAPTURE_FPS
+        self._camera_revision = 0
+        self._show_camera_settings = False
 
     def set_enabled(self, enabled: bool) -> None:
         with self._lock:
@@ -113,7 +118,25 @@ class CameraWorker(QThread):
 
     def set_camera(self, index: int) -> None:
         with self._lock:
-            self._camera_index = index
+            index = max(0, int(index))
+            if self._camera_index != index:
+                self._camera_index = index
+                self._camera_revision += 1
+
+    def set_capture_fps(self, fps: int) -> None:
+        """Reopen the active camera with a requested frame rate; zero means driver default."""
+        fps = int(fps)
+        if fps != 0:
+            fps = max(5, min(120, fps))
+        with self._lock:
+            if self._capture_fps != fps:
+                self._capture_fps = fps
+                self._camera_revision += 1
+
+    def request_camera_settings(self) -> None:
+        """Ask the capture thread to open the Windows camera-driver controls."""
+        with self._lock:
+            self._show_camera_settings = True
 
     def set_swap_hands(self, swap: bool) -> None:
         with self._lock:
@@ -318,6 +341,31 @@ class CameraWorker(QThread):
                     self._controller.center_pointer()
                 self.paused_changed.emit(bool(action.amount))
 
+    @staticmethod
+    def _capture_value(capture, property_id: int) -> float | None:
+        try:
+            value = float(capture.get(property_id))
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) and value >= 0.0 else None
+
+    @staticmethod
+    def _configure_capture(capture, cv2, requested_fps: int) -> dict[str, float | int | bool]:
+        """Apply capture format and return the driver's reported configuration."""
+        capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_WIDTH)
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, CAPTURE_HEIGHT)
+        fps_accepted = True
+        if requested_fps > 0:
+            fps_accepted = bool(capture.set(cv2.CAP_PROP_FPS, requested_fps))
+        reported_fps = CameraWorker._capture_value(capture, cv2.CAP_PROP_FPS)
+        return {
+            "requested_fps": requested_fps,
+            "reported_fps": reported_fps or 0.0,
+            "fps_accepted": fps_accepted,
+        }
+
     def _apply_focus(self, capture, cv2) -> int:
         """Apply the latest focus mode on the capture-owning thread."""
         with self._lock:
@@ -326,23 +374,53 @@ class CameraWorker(QThread):
             focus_lock = self._focus_lock
             revision = self._focus_revision
 
+        current_focus = self._capture_value(capture, cv2.CAP_PROP_FOCUS)
+        current_autofocus = self._capture_value(capture, cv2.CAP_PROP_AUTOFOCUS)
+        manual_supported = current_focus is not None
+        autofocus_supported = current_autofocus is not None
+        applied = False
+        mode = "locked" if focus_lock else "auto" if autofocus else "manual"
+
         if focus_lock:
             # Freeze the value currently chosen by the lens, then switch the
             # driver to manual mode. Some UVC cameras do not expose this read;
             # in that case the current manual slider value is retained.
-            current = capture.get(cv2.CAP_PROP_FOCUS)
-            if 0.0 <= current <= 255.0:
-                manual_focus = round(current)
+            if current_focus is not None:
+                manual_focus = round(current_focus)
                 with self._lock:
                     self._manual_focus = manual_focus
                 self.focus_locked.emit(manual_focus)
-            capture.set(cv2.CAP_PROP_AUTOFOCUS, 0)
-            capture.set(cv2.CAP_PROP_FOCUS, manual_focus)
+                capture.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+                applied = bool(capture.set(cv2.CAP_PROP_FOCUS, manual_focus))
         elif autofocus:
-            capture.set(cv2.CAP_PROP_AUTOFOCUS, 1)
+            applied = bool(capture.set(cv2.CAP_PROP_AUTOFOCUS, 1))
         else:
             capture.set(cv2.CAP_PROP_AUTOFOCUS, 0)
-            capture.set(cv2.CAP_PROP_FOCUS, manual_focus)
+            applied = bool(capture.set(cv2.CAP_PROP_FOCUS, manual_focus))
+
+        readback_focus = self._capture_value(capture, cv2.CAP_PROP_FOCUS)
+        readback_autofocus = self._capture_value(capture, cv2.CAP_PROP_AUTOFOCUS)
+        manual_supported = manual_supported or readback_focus is not None or (mode != "auto" and applied)
+        autofocus_supported = autofocus_supported or readback_autofocus is not None or (mode == "auto" and applied)
+        if not manual_supported and not autofocus_supported:
+            message = "This camera driver does not expose focus controls."
+        elif mode == "auto" and not applied:
+            message = "The camera rejected autofocus."
+        elif mode != "auto" and not applied:
+            message = "The camera rejected the manual focus value."
+        elif mode == "auto":
+            message = "Autofocus applied."
+        else:
+            shown_focus = round(readback_focus) if readback_focus is not None else manual_focus
+            message = f"{'Focus locked' if focus_lock else 'Manual focus applied'} at {shown_focus}."
+        self.focus_status.emit({
+            "manual_supported": manual_supported,
+            "autofocus_supported": autofocus_supported,
+            "applied": applied,
+            "mode": mode,
+            "value": round(readback_focus) if readback_focus is not None else manual_focus,
+            "message": message,
+        })
         return revision
 
     def run(self) -> None:
@@ -496,6 +574,7 @@ class CameraWorker(QThread):
 
         capture = None
         active_camera = -1
+        active_camera_revision = -1
         last_preview = 0.0
         cached_clahe = None
         cached_clahe_clip = -1.0
@@ -506,9 +585,13 @@ class CameraWorker(QThread):
                 with self._lock:
                     enabled = self._enabled
                     camera_index = self._camera_index
+                    requested_fps = self._capture_fps
+                    camera_revision = self._camera_revision
                     preview_enabled = self._preview_enabled
+                    show_camera_settings = self._show_camera_settings
+                    self._show_camera_settings = False
 
-                if camera_index != active_camera:
+                if camera_index != active_camera or camera_revision != active_camera_revision:
                     if capture is not None:
                         capture.release()
                     _backend = cv2.CAP_AVFOUNDATION if platform.system() == "Darwin" else cv2.CAP_DSHOW
@@ -518,12 +601,10 @@ class CameraWorker(QThread):
                         capture = cv2.VideoCapture(camera_index)
                     # MJPEG avoids the low-FPS uncompressed mode many Windows
                     # webcams select at HD resolutions.
-                    capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                    capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-                    capture.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_WIDTH)
-                    capture.set(cv2.CAP_PROP_FRAME_HEIGHT, CAPTURE_HEIGHT)
-                    capture.set(cv2.CAP_PROP_FPS, CAPTURE_FPS)
+                    configuration = self._configure_capture(capture, cv2, requested_fps)
+                    self.camera_configuration.emit(configuration)
                     active_camera = camera_index
+                    active_camera_revision = camera_revision
                     applied_focus_revision = -1
                     with result_lock:
                         latest_hands = ()
@@ -538,6 +619,14 @@ class CameraWorker(QThread):
                         continue
 
                 assert capture is not None
+                if show_camera_settings and platform.system() == "Windows":
+                    if not capture.set(cv2.CAP_PROP_SETTINGS, 1):
+                        emit_error_throttled(
+                            "The camera driver did not provide a native controls dialog.",
+                            "camera_settings",
+                            1.0,
+                        )
+                    applied_focus_revision = -1
                 ok, frame = capture.read()
                 if not ok:
                     emit_error_throttled("Camera frame was lost. Reconnecting…", "frame_lost")

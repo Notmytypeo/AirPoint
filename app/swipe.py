@@ -43,6 +43,7 @@ class ThreeFingerSwipeDetector:
         self._samples: deque[tuple[float, float, float]] = deque()
         self._armed_at = -10.0
         self._cooldown_until = -10.0
+        self._pose_misses = 0
 
     def reset(self) -> None:
         self.state = SwipeState.IDLE
@@ -50,6 +51,7 @@ class ThreeFingerSwipeDetector:
         self._pose_frames = 0
         self._samples.clear()
         self._armed_at = -10.0
+        self._pose_misses = 0
 
     @staticmethod
     def _distance(a, b) -> float:
@@ -102,9 +104,19 @@ class ThreeFingerSwipeDetector:
                 return SwipeResult(self.state)
             self.reset()
 
-        if pinch_active or not self._is_three_finger_pose(points, tuning):
+        if pinch_active:
             self.reset()
             return SwipeResult(SwipeState.IDLE)
+
+        pose_valid = self._is_three_finger_pose(points, tuning)
+        if not pose_valid:
+            grace_frames = round(tuning["swipe_pose_grace_frames"])
+            if self.state == SwipeState.IDLE or self._pose_misses >= grace_frames:
+                self.reset()
+                return SwipeResult(SwipeState.IDLE)
+            self._pose_misses += 1
+            return SwipeResult(self.state, frames=self._pose_frames)
+        self._pose_misses = 0
 
         x, y = self._three_finger_center(points)
         if self.state == SwipeState.IDLE:
@@ -124,12 +136,22 @@ class ThreeFingerSwipeDetector:
         if self._pose_frames < round(tuning["swipe_min_hold_frames"]):
             return SwipeResult(self.state, dx=dx, dy=dy, frames=self._pose_frames)
 
-        horizontal_valid = abs(dy) <= tuning["swipe_vertical_tolerance"]
-        vertical_valid = abs(dx) <= tuning["swipe_horizontal_tolerance"]
+        horizontal_valid = abs(dy) <= max(tuning["swipe_vertical_tolerance"], abs(dx) * 0.65)
+        vertical_valid = abs(dx) <= max(tuning["swipe_horizontal_tolerance"], abs(dy) * 0.65)
         if self.state == SwipeState.ARMED:
-            if abs(dx) >= tuning["swipe_arm_distance"] and horizontal_valid:
+            absolute_dx, absolute_dy = abs(dx), abs(dy)
+            dominance = tuning["swipe_axis_dominance"]
+            if (
+                absolute_dx >= tuning["swipe_arm_distance"]
+                and absolute_dx >= absolute_dy * dominance
+                and horizontal_valid
+            ):
                 self.state, self._axis = SwipeState.TRACKING, "horizontal"
-            elif abs(dy) >= tuning["swipe_arm_distance"] and vertical_valid:
+            elif (
+                absolute_dy >= tuning["swipe_arm_distance"]
+                and absolute_dy >= absolute_dx * dominance
+                and vertical_valid
+            ):
                 self.state, self._axis = SwipeState.TRACKING, "vertical"
             elif timestamp - self._armed_at > tuning["swipe_window_seconds"] * 1.5:
                 self.reset()
