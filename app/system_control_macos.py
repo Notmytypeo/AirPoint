@@ -138,6 +138,12 @@ class InputController:
         self._post_mouse(Q.kCGEventRightMouseDown, x, y, Q.kCGMouseButtonRight)
         self._post_mouse(Q.kCGEventRightMouseUp, x, y, Q.kCGMouseButtonRight)
 
+    def middle_click(self) -> None:
+        Q = self._Q
+        x, y = self._cursor_position()
+        self._post_mouse(Q.kCGEventOtherMouseDown, x, y, Q.kCGMouseButtonCenter)
+        self._post_mouse(Q.kCGEventOtherMouseUp, x, y, Q.kCGMouseButtonCenter)
+
     def left_down(self) -> None:
         if not self._left_held:
             Q = self._Q
