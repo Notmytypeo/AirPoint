@@ -17,6 +17,19 @@ def three_finger_pose():
     return tuple(Landmark(x, y) for x, y in coordinates)
 
 
+def natural_three_finger_pose():
+    """A less idealized pose with close fingers and a relaxed thumb."""
+    coordinates = [
+        (0.50, 0.90),
+        (0.39, 0.78), (0.32, 0.67), (0.27, 0.61), (0.23, 0.67),
+        (0.40, 0.66), (0.39, 0.50), (0.41, 0.37), (0.44, 0.25),
+        (0.49, 0.63), (0.49, 0.45), (0.50, 0.30), (0.51, 0.17),
+        (0.58, 0.66), (0.59, 0.50), (0.59, 0.37), (0.58, 0.25),
+        (0.66, 0.71), (0.66, 0.74), (0.67, 0.77), (0.66, 0.80),
+    ]
+    return tuple(Landmark(x, y) for x, y in coordinates)
+
+
 def move_three_fingers(points, dx=0.0, dy=0.0):
     moved = list(points)
     for index in range(len(moved)):
@@ -85,6 +98,39 @@ class SwipeDetectorTests(unittest.TestCase):
         self.assertEqual(self._arm_and_track(dx=0.0, dy=0.07).state, SwipeState.TRACKING)
         down = self._frame(0.12, dy=0.15)
         self.assertEqual(down.direction, "down")
+
+    def test_natural_close_finger_pose_fires_in_all_directions(self):
+        self.points = natural_three_finger_pose()
+        for dx, dy, expected in (
+            (0.15, 0.0, "right"),
+            (-0.15, 0.0, "left"),
+            (0.0, -0.15, "up"),
+            (0.0, 0.15, "down"),
+        ):
+            with self.subTest(direction=expected):
+                self.detector.reset()
+                self.assertEqual(
+                    self._arm_and_track(dx=dx * 0.47, dy=dy * 0.47).state,
+                    SwipeState.TRACKING,
+                )
+                result = self._frame(0.12, dx=dx, dy=dy)
+                self.assertEqual(result.direction, expected)
+
+    def test_open_palm_is_not_accepted_as_three_finger_pose(self):
+        self.assertFalse(
+            self.detector._is_three_finger_pose(
+                open_little_finger(self.points),
+                self.tuning,
+            )
+        )
+
+    def test_stationary_pose_remains_armed_until_motion_starts(self):
+        for frame in range(15):
+            result = self._frame(frame * 0.03)
+        self.assertEqual(result.state, SwipeState.ARMED)
+        for timestamp, dx in ((0.45, 0.02), (0.48, 0.07), (0.51, 0.15), (0.54, 0.18)):
+            result = self._frame(timestamp, dx=dx)
+        self.assertEqual(result.direction, "right")
 
     def test_vertical_swipe_uses_the_larger_axis_when_both_cross_arm_distance(self):
         self._frame(0.00)

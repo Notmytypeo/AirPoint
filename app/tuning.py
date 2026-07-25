@@ -91,7 +91,7 @@ DEVELOPER_PARAMETERS = (
     TuningParameter("zoom_smoothing", "Modes", "Zoom smoothing", "Blend for the two-hand zoom distance. Higher is more responsive.", 0.55, 0.20, 0.90, 0.05, 2),
     TuningParameter("zoom_step_factor", "Modes", "Zoom step factor", "Fraction of starting hand spacing required per zoom step.", 0.055, 0.020, 0.120, 0.005, 3),
     TuningParameter("zoom_emit_interval", "Modes", "Zoom interval", "Minimum seconds between zoom steps.", 0.09, 0.03, 0.30, 0.01, 2),
-    TuningParameter("swipe_enabled", "Swipes", "Enable three-finger swipes", "Enable either hand's three-finger swipes for app switching, Task View, and Show Desktop. Off by default to preserve normal pointer tracking.", 0.00, 0.00, 1.00, 1.00, 0, "toggle"),
+    TuningParameter("swipe_enabled", "Swipes", "Enable three-finger swipes", "Enable either hand's three-finger swipes for app switching, Task View, and Show Desktop.", 1.00, 0.00, 1.00, 1.00, 0, "toggle"),
     TuningParameter("swipe_min_hold_frames", "Swipes", "Arm hold frames", "Consecutive qualifying three-finger frames required before tracking arms.", 3.00, 2.00, 12.00, 1.00, 0),
     TuningParameter("swipe_pose_grace_frames", "Swipes", "Pose dropout grace", "Brief invalid-pose frames tolerated during an armed swipe. One frame handles landmark flicker without hiding a real release.", 1.00, 0.00, 2.00, 1.00, 0),
     TuningParameter("swipe_window_seconds", "Swipes", "Motion window", "Rolling raw three-fingertip sample window used for displacement and velocity.", 0.20, 0.10, 0.40, 0.01, 2),
@@ -102,10 +102,10 @@ DEVELOPER_PARAMETERS = (
     TuningParameter("swipe_min_velocity", "Swipes", "Minimum velocity", "Normalized three-fingertip velocity required to fire a swipe.", 0.40, 0.15, 2.00, 0.05, 2),
     TuningParameter("swipe_vertical_tolerance", "Swipes", "Vertical tolerance", "Maximum vertical movement allowed during a left/right three-finger swipe.", 0.075, 0.020, 0.180, 0.005, 3),
     TuningParameter("swipe_horizontal_tolerance", "Swipes", "Horizontal tolerance", "Maximum horizontal movement allowed during an up/down three-finger swipe.", 0.075, 0.020, 0.180, 0.005, 3),
-    TuningParameter("swipe_extension_angle", "Swipes", "Finger extension", "Minimum main-joint angle for each raised swipe finger. Lower accepts naturally curved fingers.", 118.0, 95.0, 150.0, 1.0, 0),
-    TuningParameter("swipe_thumb_fold_limit", "Swipes", "Thumb fold limit", "Maximum thumb-to-wrist distance, in palm widths, while arming the three-finger pose.", 1.45, 0.80, 2.20, 0.05, 2),
+    TuningParameter("swipe_extension_angle", "Swipes", "Finger extension", "Minimum main-joint angle for each raised swipe finger. Lower accepts naturally curved fingers.", 108.0, 95.0, 150.0, 1.0, 0),
+    TuningParameter("swipe_thumb_fold_limit", "Swipes", "Thumb fold limit", "Maximum thumb-to-wrist distance, in palm widths, while arming the three-finger pose. The tested default accepts a relaxed thumb but rejects a fully open palm.", 1.85, 0.80, 2.40, 0.05, 2),
     TuningParameter("swipe_cooldown_seconds", "Swipes", "Cooldown", "Seconds after a fired swipe before another action can occur.", 0.50, 0.20, 1.20, 0.05, 2),
-    TuningParameter("swipe_min_spread", "Swipes", "Three-finger spread", "Minimum index-to-ring-finger spread, relative to palm width, to arm swiping.", 0.85, 0.60, 2.00, 0.05, 2),
+    TuningParameter("swipe_min_spread", "Swipes", "Three-finger spread", "Minimum index-to-ring-finger spread, relative to palm width, to arm swiping. Lower values accept fingers held naturally together.", 0.42, 0.25, 2.00, 0.05, 2),
     TuningParameter("swipe_debug", "Swipes", "Show swipe debug", "Show state, raw displacement, velocity, and arm frame count in the status pill.", 0.00, 0.00, 1.00, 1.00, 0, "toggle"),
 )
 
