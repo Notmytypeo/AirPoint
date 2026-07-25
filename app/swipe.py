@@ -204,8 +204,15 @@ class ThreeFingerSwipeDetector:
             elif absolute_dy > absolute_dx and absolute_dy >= arm_distance and vertical_valid:
                 self.state, self._axis = SwipeState.TRACKING, "vertical"
             elif timestamp - self._armed_at > tuning["swipe_window_seconds"] * 1.5:
-                self.reset()
-                return SwipeResult(SwipeState.IDLE, dx=dx, dy=dy, frames=self._pose_frames)
+                # A user commonly presents the three-finger pose, pauses, and
+                # only then starts moving. Keep the valid pose armed while
+                # rebasing the rolling motion origin so that pause does not
+                # create a flickering IDLE window or stale displacement.
+                self._samples.clear()
+                self._samples.append((timestamp, x, y, palm_width))
+                self._pose_frames = 1
+                self._armed_at = timestamp
+                return SwipeResult(SwipeState.ARMED, frames=self._pose_frames)
             return SwipeResult(self.state, dx=dx, dy=dy, frames=self._pose_frames)
 
         primary_delta = dx if self._axis == "horizontal" else dy

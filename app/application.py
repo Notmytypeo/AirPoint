@@ -208,6 +208,7 @@ class MainWindow(QMainWindow):
         self._repair_unsafe_pinch_profile()
         self._repair_handedness_default()
         self._repair_pointer_response_profile()
+        self._repair_swipe_pose_profile()
         self._activation_behavior = self._load_activation_behavior()
         # Load theme setting (default to True: dark mode)
         saved_theme_value = self.settings.value("dark_mode", True)
@@ -378,6 +379,34 @@ class MainWindow(QMainWindow):
         if self.settings.value("developer/precision_release_seconds") is None:
             self.settings.setValue("developer/precision_release_seconds", 0.07)
         self.settings.setValue("developer/pointer_response_revision", 5)
+
+    def _repair_swipe_pose_profile(self) -> None:
+        """Migrate only untouched 1.4.0 swipe-pose defaults.
+
+        The former thresholds expected an unusually wide finger fan and a
+        tightly tucked thumb. Real hands commonly keep the three raised
+        fingers closer together and the thumb relaxed, so those defaults made
+        a valid gesture appear disabled. Explicitly customized values are
+        preserved.
+        """
+        revision = int(self.settings.value("developer/swipe_pose_revision", 0))
+        if revision >= 1:
+            return
+        legacy_to_reliable = (
+            ("swipe_extension_angle", 118.0, 108.0),
+            ("swipe_thumb_fold_limit", 1.45, 1.85),
+            ("swipe_min_spread", 0.85, 0.42),
+        )
+        for key, legacy_value, reliable_value in legacy_to_reliable:
+            saved = self.settings.value(f"developer/{key}")
+            if saved is None:
+                continue
+            try:
+                if abs(float(saved) - legacy_value) < 1e-6:
+                    self.settings.setValue(f"developer/{key}", reliable_value)
+            except (TypeError, ValueError):
+                pass
+        self.settings.setValue("developer/swipe_pose_revision", 1)
 
     def _load_developer_tuning(self) -> dict[str, float]:
         saved_values: dict[str, float] = {}

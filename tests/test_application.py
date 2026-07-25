@@ -252,6 +252,28 @@ class MainWindowTaskbarTests(unittest.TestCase):
             0.70,
         )
 
+    def test_swipe_pose_profile_migrates_only_legacy_defaults(self):
+        class Settings:
+            def __init__(self):
+                self.values = {
+                    "developer/swipe_extension_angle": 118.0,
+                    "developer/swipe_thumb_fold_limit": 1.45,
+                    "developer/swipe_min_spread": 1.10,
+                }
+
+            def value(self, key, default=None):
+                return self.values.get(key, default)
+
+            def setValue(self, key, value):
+                self.values[key] = value
+
+        window = SimpleNamespace(settings=Settings())
+        MainWindow._repair_swipe_pose_profile(window)
+        self.assertEqual(window.settings.values["developer/swipe_extension_angle"], 108.0)
+        self.assertEqual(window.settings.values["developer/swipe_thumb_fold_limit"], 1.85)
+        self.assertEqual(window.settings.values["developer/swipe_min_spread"], 1.10)
+        self.assertEqual(window.settings.values["developer/swipe_pose_revision"], 1)
+
     def test_normalized_sibling_developer_values_update_controls_and_storage(self):
         class Settings:
             def __init__(self):

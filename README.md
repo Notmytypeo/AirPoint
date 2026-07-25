@@ -8,7 +8,7 @@ You do **not** need to download the source code or install Python. Choose one op
 
 | Your computer | Download | Beginner guide |
 |---|---|---|
-| **Windows 10 or 11** | [AirPoint Windows installer (.exe)](https://github.com/Notmytypeo/AirPoint/releases/latest/download/AirPoint_Setup_1.4.0.exe) | [Windows installation guide](windows_installer/README.md) |
+| **Windows 10 or 11** | [AirPoint Windows installer (.exe)](https://github.com/Notmytypeo/AirPoint/releases/latest/download/AirPoint_Setup_1.4.1.exe) | [Windows installation guide](windows_installer/README.md) |
 | **MacBook with Apple chip** (M1, M2, M3, or M4) | [AirPoint Apple Silicon installer (.zip)](https://github.com/Notmytypeo/AirPoint/releases/latest/download/AirPoint-macOS-arm64.zip) | [macOS installation guide](mac_installer/README.md) |
 | **Older Intel MacBook** | Download `AirPoint-macOS-x86_64.zip` from the [latest release](https://github.com/Notmytypeo/AirPoint/releases/latest) when available | [macOS installation guide](mac_installer/README.md) |
 
@@ -32,7 +32,7 @@ The `windows_installer/` and `mac_installer/` folders contain instructions only.
 | Hold a left fist, then pinch right index + thumb and move up/down | Scroll up/down |
 | Raise the right index + middle fingers, fold the other two, and move vertically | Two-finger scroll up/down |
 | Pinch index + thumb on both hands, then move hands apart/together | Zoom in/out |
-| Optional: either hand's index + middle + ring fingers, thumb/little folded, then swipe | Right/left: switch apps; up: Task View; down: Show Desktop |
+| Either hand's index + middle + ring fingers raised, little finger folded and thumb relaxed, then swipe | Right/left: switch apps; up: Task View; down: Show Desktop |
 
 The open left palm explicitly switches into volume mode, so its right-hand index pinch will not also left-click.
 Whenever gesture control is activated, AirPoint places the pointer at the center of the virtual desktop once before hand movement begins.
@@ -95,7 +95,7 @@ Build the versioned PyInstaller bundle and Inno Setup installer:
 .\build_installer.ps1
 ```
 
-The distributable installer is written to `installer_output\AirPoint_Setup_1.4.0.exe`. The version comes from `app/__init__.py`, and the same value is embedded in the app executable and passed into Inno Setup. The tracked `AirPoint.spec` file is required for reproducible builds; generated `build/`, `dist/`, and installer output remain excluded from Git.
+The distributable installer is written to `installer_output\AirPoint_Setup_1.4.1.exe`. The version comes from `app/__init__.py`, and the same value is embedded in the app executable and passed into Inno Setup. The tracked `AirPoint.spec` file is required for reproducible builds; generated `build/`, `dist/`, and installer output remain excluded from Git.
 
 ## Build a macOS .app bundle
 
