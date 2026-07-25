@@ -72,6 +72,7 @@ class PointFilter:
         precision_release_seconds: float = 0.07,
         confidence_floor: float = 0.25,
         jump_threshold: float = 0.095,
+        prediction_reversal_guard: bool = True,
     ) -> None:
         # Lower cutoff stabilizes a resting hand; higher beta quickly opens the
         # filter during intentional motion. The radial dead zone removes the
@@ -89,6 +90,7 @@ class PointFilter:
         self.precision_release_seconds = max(0.02, min(0.30, precision_release_seconds))
         self.confidence_floor = max(0.0, min(0.95, confidence_floor))
         self.jump_threshold = max(0.01, jump_threshold)
+        self.prediction_reversal_guard = bool(prediction_reversal_guard)
         self._last_base: tuple[float, float] | None = None
         self._last_time: float | None = None
         self._velocity = (0.0, 0.0)
@@ -111,6 +113,7 @@ class PointFilter:
         precision_release_seconds: float,
         confidence_floor: float,
         jump_threshold: float,
+        prediction_reversal_guard: bool,
     ) -> None:
         self.dead_zone = max(0.0, dead_zone)
         self.lookahead_frames = max(0.0, min(1.0, lookahead_frames))
@@ -122,6 +125,7 @@ class PointFilter:
         self.precision_release_seconds = max(0.02, min(0.30, precision_release_seconds))
         self.confidence_floor = max(0.0, min(0.95, confidence_floor))
         self.jump_threshold = max(0.01, jump_threshold)
+        self.prediction_reversal_guard = bool(prediction_reversal_guard)
 
     def apply(
         self,
@@ -243,6 +247,7 @@ class PointFilter:
         # single noisy landmark jump while still cancelling normal filter lag.
         step_x = base[0] - self._last_base[0]
         step_y = base[1] - self._last_base[1]
+        previous_velocity = self._velocity
         self._velocity = (
             self._velocity[0] * 0.42 + step_x * 0.58,
             self._velocity[1] * 0.42 + step_y * 0.58,
@@ -250,6 +255,19 @@ class PointFilter:
         # Fade prediction out as precision_factor rises — the pointer should
         # converge on the target, not coast past it.
         lookahead = self.lookahead_frames * (1.0 - precision_factor) if precision_active else self.lookahead_frames
+        if self.prediction_reversal_guard:
+            previous_speed = math.hypot(*previous_velocity)
+            current_speed = math.hypot(step_x, step_y)
+            if previous_speed <= 1e-6 or current_speed <= 1e-6:
+                lookahead = 0.0
+            else:
+                alignment = (
+                    previous_velocity[0] * step_x + previous_velocity[1] * step_y
+                ) / (previous_speed * current_speed)
+                # Prediction is useful for coherent motion, but becomes
+                # overshoot when the hand stops or reverses direction.
+                speed_consistency = min(1.0, current_speed / previous_speed)
+                lookahead *= max(0.0, min(1.0, alignment)) * speed_consistency
         predicted_dx = max(-self.prediction_cap, min(self.prediction_cap, self._velocity[0] * lookahead))
         predicted_dy = max(-self.prediction_cap, min(self.prediction_cap, self._velocity[1] * lookahead))
         self._last_base = base

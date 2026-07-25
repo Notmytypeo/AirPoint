@@ -122,6 +122,18 @@ class PointFilterTests(unittest.TestCase):
         released = smoothing.apply(0.8, 0.5, 2 / 60, precision_factor=0.0)
         self.assertLess(released[0] - precise[0], 0.02)
 
+    def test_reversal_guard_reduces_prediction_overshoot(self):
+        guarded = PointFilter(prediction_reversal_guard=True)
+        unguarded = PointFilter(prediction_reversal_guard=False)
+        guarded_output = unguarded_output = None
+        for index, x in enumerate((0.20, 0.35, 0.50, 0.35)):
+            guarded_output = guarded.apply(x, 0.5, index / 60)
+            unguarded_output = unguarded.apply(x, 0.5, index / 60)
+        self.assertLess(
+            abs(guarded_output[0] - 0.35),
+            abs(unguarded_output[0] - 0.35),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

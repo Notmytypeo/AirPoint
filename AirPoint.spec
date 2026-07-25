@@ -1,13 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for AirPoint — one-folder bundle."""
+"""PyInstaller spec for the AirPoint one-folder bundle."""
 
 import os
 import importlib
 
 block_cipher = None
 
-# ── Locate packages so we can grab their data files ──────────────────
+# Locate packages so we can grab their data files.
 mediapipe_dir = os.path.dirname(importlib.import_module("mediapipe").__file__)
+cv2_dir = os.path.dirname(importlib.import_module("cv2").__file__)
 
 a = Analysis(
     ["main.py"],
@@ -20,6 +21,9 @@ a = Analysis(
         (os.path.join("app", "assets"), os.path.join("app", "assets")),
         # MediaPipe needs its data files (protobuf configs, TFLite delegates)
         (mediapipe_dir, "mediapipe"),
+        # Lightweight face/eyeglasses veto for rejecting hand-shaped facial features
+        (os.path.join(cv2_dir, "data", "haarcascade_frontalface_default.xml"), os.path.join("cv2", "data")),
+        (os.path.join(cv2_dir, "data", "haarcascade_eye_tree_eyeglasses.xml"), os.path.join("cv2", "data")),
     ],
     hiddenimports=[
         "mediapipe",
@@ -32,14 +36,9 @@ a = Analysis(
         "numpy",
         "cv2",
         "uiautomation",
-        # MediaPipe transitive dependencies
-        "matplotlib",
-        "matplotlib.backends",
-        "matplotlib.backends.backend_agg",
         "absl",
         "absl.logging",
         "flatbuffers",
-        "sounddevice",
     ],
     hookspath=[],
     hooksconfig={},
@@ -51,6 +50,10 @@ a = Analysis(
         "IPython",
         "jupyter",
         "notebook",
+        # MediaPipe's audio extras are not used by this vision-only app.
+        "sounddevice",
+        "_sounddevice",
+        "_sounddevice_data",
     ],
     noarchive=False,
     optimize=0,

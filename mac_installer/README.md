@@ -35,7 +35,7 @@ If AirPoint is not listed, click **+**, choose `AirPoint.app` from Applications,
 2. Choose the correct camera if you have more than one.
 3. Stand or sit about 45–100 cm from the camera with good front lighting.
 4. Wait until the preview shows stable hand landmarks.
-5. Click **Enable control**. The app minimizes while gesture control stays active.
+5. Choose what the window should do when control starts, then click **Enable control**. It stays open by default; you can instead minimize it or hide it to the notification area while tracking continues.
 
 To pause, hold **both fists** for about a second. While paused, hold the pointer-hand fist to resume. Close AirPoint normally from its window to stop it.
 
@@ -46,6 +46,8 @@ To pause, hold **both fists** for about a second. While paused, hold the pointer
 | Move your pointer-hand index finger | Move the pointer |
 | Pinch pointer-hand index finger and thumb | Left click |
 | Pinch pointer-hand middle finger and thumb | Right click |
+| Pinch pointer-hand ring finger and thumb with the other fingers open | Middle click |
+| First index-thumb pinch, then deliberately move the whole hand up/down | One-hand scroll |
 | Pinch twice quickly | Double click; hold the second pinch and move to drag |
 | Open the support-hand palm, then pinch and move up/down | Change volume |
 | Pointer-hand index and middle fingers raised | Scroll |

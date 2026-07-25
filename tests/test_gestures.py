@@ -36,6 +36,28 @@ def index_pinched_hand(handedness, dx=0.0, dy=0.0):
     return with_point(hand, 8, thumb.x + 0.01, thumb.y)
 
 
+def ring_pinched_hand(handedness="Right"):
+    hand = open_hand(handedness)
+    thumb = hand.landmarks[4]
+    return with_point(hand, 16, thumb.x + 0.01, thumb.y)
+
+
+def with_confidence(hand, confidence):
+    return HandObservation(
+        hand.handedness,
+        hand.landmarks,
+        hand.world_landmarks,
+        confidence,
+    )
+
+
+def move_pinching_fingertips(hand, dy):
+    points = list(hand.landmarks)
+    points[4] = Landmark(points[4].x, points[4].y + dy, points[4].z)
+    points[8] = Landmark(points[8].x, points[8].y + dy, points[8].z)
+    return HandObservation(hand.handedness, tuple(points))
+
+
 def index_pinched_with_free_fingers_folded(handedness, dx=0.0):
     hand = shift_hand(fist(handedness), dx=dx)
     thumb = hand.landmarks[4]
@@ -145,9 +167,11 @@ class GestureEngineTests(unittest.TestCase):
 
     def test_dominant_three_finger_swipe_switches_applications(self):
         self.engine.configure(1.0, (0, 0, 1920, 1080), tuning={"swipe_enabled": 1.0})
+        frames = []
         for timestamp, dx in ((1.00, 0.0), (1.03, 0.01), (1.06, 0.02), (1.09, 0.07)):
-            self.engine.process((three_finger_swipe_hand("Right", dx=dx),), timestamp)
+            frames.append(self.engine.process((three_finger_swipe_hand("Right", dx=dx),), timestamp))
         frame = self.engine.process((three_finger_swipe_hand("Right", dx=0.15),), 1.12)
+        self.assertTrue(all("move" not in action_kinds(item) for item in frames))
         self.assertIn("app_next", action_kinds(frame))
 
     def test_pointer_reaches_screen_edges_from_compact_hand_workspace(self):
@@ -190,13 +214,440 @@ class GestureEngineTests(unittest.TestCase):
         pinched = with_point(hand, 8, thumb.x + 0.01, thumb.y)
         contact = self.engine.process((pinched,), 1.0)
         held = self.engine.process((pinched,), 1.05)
-        released = self.engine.process((hand,), 1.1)
+        dropout_guard = self.engine.process((hand,), 1.1)
+        released = self.engine.process((hand,), 1.14)
         self.assertNotIn("left_click", action_kinds(contact))
-        self.assertIn("pinch_start", action_kinds(contact))
+        self.assertIn("move vertically to scroll", contact.gesture)
         self.assertNotIn("move", action_kinds(contact))
-        self.assertIn("pinch_move", action_kinds(held))
+        self.assertNotIn("pinch_move", action_kinds(held))
+        self.assertNotIn("left_click", action_kinds(dropout_guard))
         self.assertIn("left_click", action_kinds(released))
         self.assertNotIn("move", action_kinds(released))
+
+    def test_one_hand_pinch_scrolls_up_and_consumes_the_click(self):
+        pinched = index_pinched_hand("Right")
+        frames = [
+            self.engine.process((shift_hand(pinched, dy=dy),), timestamp)
+            for timestamp, dy in (
+                (1.00, 0.000),
+                (1.04, -0.012),
+                (1.08, -0.028),
+                (1.12, -0.050),
+            )
+        ]
+        scrolls = [
+            action
+            for frame in frames
+            for action in frame.actions
+            if action.kind == "scroll"
+        ]
+        released = self.engine.process((open_hand("Right"),), 1.20)
+        self.assertTrue(scrolls)
+        self.assertTrue(all(action.amount > 0 for action in scrolls))
+        self.assertNotIn("left_click", action_kinds(released))
+        self.assertEqual(self.engine._last_index_release, -10.0)
+
+    def test_one_hand_pinch_scrolls_down(self):
+        pinched = index_pinched_hand("Right")
+        frames = [
+            self.engine.process((shift_hand(pinched, dy=dy),), timestamp)
+            for timestamp, dy in (
+                (1.00, 0.000),
+                (1.04, 0.012),
+                (1.08, 0.028),
+                (1.12, 0.050),
+            )
+        ]
+        amounts = [
+            action.amount
+            for frame in frames
+            for action in frame.actions
+            if action.kind == "scroll"
+        ]
+        self.assertTrue(amounts)
+        self.assertTrue(all(amount < 0 for amount in amounts))
+
+    def test_pinch_scroll_is_consistent_at_15_30_and_60_fps(self):
+        totals = []
+        for fps in (15, 30, 60):
+            engine = GestureEngine()
+            engine.configure(1.0, (0, 0, 1920, 1080))
+            pinched = index_pinched_hand("Right")
+            total = 0
+            duration = 0.40
+            for index in range(round(duration * fps) + 1):
+                progress = index / (duration * fps)
+                frame = engine.process(
+                    (shift_hand(pinched, dy=-0.12 * progress),),
+                    1.0 + index / fps,
+                )
+                total += sum(
+                    action.amount
+                    for action in frame.actions
+                    if action.kind == "scroll"
+                )
+            totals.append(total)
+        self.assertTrue(all(total > 0 for total in totals))
+        self.assertLessEqual(max(totals) - min(totals), 1)
+
+    def test_slow_pinch_scroll_arms_consistently_at_15_30_and_60_fps(self):
+        totals = []
+        for fps in (15, 30, 60):
+            engine = GestureEngine()
+            engine.configure(1.0, (0, 0, 1920, 1080))
+            pinched = index_pinched_hand("Right")
+            total = 0
+            for index in range(fps + 1):
+                frame = engine.process(
+                    (shift_hand(pinched, dy=-0.06 * index / fps),),
+                    1.0 + index / fps,
+                )
+                total += sum(
+                    action.amount
+                    for action in frame.actions
+                    if action.kind == "scroll"
+                )
+            totals.append(total)
+        self.assertTrue(all(total > 0 for total in totals))
+        self.assertLessEqual(max(totals) - min(totals), 1)
+
+    def test_left_handed_mode_mirrors_one_hand_pinch_scroll(self):
+        self.engine.configure(1.0, (0, 0, 1920, 1080), left_handed=True)
+        pinched = index_pinched_hand("Left")
+        frames = [
+            self.engine.process((shift_hand(pinched, dy=dy),), timestamp)
+            for timestamp, dy in (
+                (1.00, 0.000),
+                (1.04, -0.012),
+                (1.08, -0.028),
+                (1.12, -0.050),
+            )
+        ]
+        self.assertTrue(
+            any(
+                action.kind == "scroll" and action.amount > 0
+                for frame in frames
+                for action in frame.actions
+            )
+        )
+
+    def test_pinch_scroll_rejects_stationary_jitter_and_fingertip_motion(self):
+        pinched = index_pinched_hand("Right")
+        jitter_frames = [
+            self.engine.process((shift_hand(pinched, dx=dx, dy=dy),), timestamp)
+            for timestamp, dx, dy in (
+                (1.00, 0.000, 0.000),
+                (1.04, 0.004, -0.005),
+                (1.08, -0.004, 0.004),
+                (1.12, 0.003, -0.003),
+                (1.16, 0.000, 0.000),
+            )
+        ]
+        self.assertFalse(any("scroll" in action_kinds(frame) for frame in jitter_frames))
+
+        engine = GestureEngine()
+        engine.configure(1.0, (0, 0, 1920, 1080))
+        fingertip_frames = [
+            engine.process((move_pinching_fingertips(pinched, dy),), timestamp)
+            for timestamp, dy in (
+                (2.00, 0.000),
+                (2.04, -0.025),
+                (2.08, -0.050),
+                (2.12, -0.080),
+            )
+        ]
+        self.assertFalse(any("scroll" in action_kinds(frame) for frame in fingertip_frames))
+
+    def test_horizontal_and_diagonal_first_pinch_never_become_scroll(self):
+        for name, shifts in (
+            ("horizontal", ((0.00, 0.00), (0.02, 0.00), (0.04, 0.00), (0.07, 0.00))),
+            ("diagonal", ((0.00, 0.00), (0.02, -0.02), (0.04, -0.04), (0.07, -0.07))),
+        ):
+            with self.subTest(name=name):
+                engine = GestureEngine()
+                engine.configure(1.0, (0, 0, 1920, 1080))
+                pinched = index_pinched_hand("Right")
+                frames = [
+                    engine.process((shift_hand(pinched, dx=dx, dy=dy),), 1.0 + index * 0.04)
+                    for index, (dx, dy) in enumerate(shifts)
+                ]
+                self.assertFalse(any("scroll" in action_kinds(frame) for frame in frames))
+                self.assertTrue(any("pinch_start" in action_kinds(frame) for frame in frames))
+
+    def test_pinch_scroll_rejects_single_frame_jump_and_low_confidence(self):
+        pinched = index_pinched_hand("Right")
+        frames = (
+            self.engine.process((pinched,), 1.00),
+            self.engine.process((shift_hand(pinched, dy=-0.20),), 1.04),
+            self.engine.process((pinched,), 1.08),
+            self.engine.process((shift_hand(pinched, dy=-0.01),), 1.12),
+        )
+        self.assertFalse(any("scroll" in action_kinds(frame) for frame in frames))
+
+        engine = GestureEngine()
+        engine.configure(1.0, (0, 0, 1920, 1080))
+        low_confidence_frames = [
+            engine.process(
+                (with_confidence(shift_hand(pinched, dy=dy), 0.30),),
+                2.0 + index * 0.04,
+            )
+            for index, dy in enumerate((0.0, -0.02, -0.04, -0.07))
+        ]
+        self.assertFalse(any("scroll" in action_kinds(frame) for frame in low_confidence_frames))
+
+    def test_pinch_scroll_requires_two_meaningful_directional_segments(self):
+        pinched = index_pinched_hand("Right")
+        frames = [
+            self.engine.process((shift_hand(pinched, dy=dy),), timestamp)
+            for timestamp, dy in (
+                (1.00, 0.000),
+                (1.04, 0.000),
+                (1.08, 0.000),
+                (1.12, -0.040),
+                (1.16, -0.040),
+            )
+        ]
+        self.assertFalse(any("scroll" in action_kinds(frame) for frame in frames))
+
+    def test_stationary_hold_can_still_transition_to_scroll_without_click(self):
+        pinched = index_pinched_hand("Right")
+        frames = [
+            self.engine.process((pinched,), 1.00),
+            self.engine.process((pinched,), 1.20),
+            self.engine.process((pinched,), 1.36),
+            self.engine.process((shift_hand(pinched, dy=-0.018),), 1.40),
+            self.engine.process((shift_hand(pinched, dy=-0.040),), 1.44),
+            self.engine.process((shift_hand(pinched, dy=-0.065),), 1.48),
+        ]
+        released = self.engine.process((open_hand("Right"),), 1.56)
+        self.assertTrue(
+            any(
+                action.kind == "scroll" and action.amount > 0
+                for frame in frames
+                for action in frame.actions
+            )
+        )
+        self.assertTrue(
+            any("pinch_cancel" in action_kinds(frame) for frame in frames)
+        )
+        self.assertNotIn("left_click", action_kinds(released))
+
+    def test_disabling_pinch_scroll_live_stops_an_active_scroll(self):
+        pinched = index_pinched_hand("Right")
+        for index, dy in enumerate((0.0, -0.012, -0.028, -0.050)):
+            self.engine.process(
+                (shift_hand(pinched, dy=dy),),
+                1.0 + index * 0.04,
+            )
+        self.assertTrue(self.engine._pinch_scroll_active)
+        self.engine.configure(
+            1.0,
+            (0, 0, 1920, 1080),
+            tuning={"pinch_scroll_enabled": 0.0},
+        )
+        frames = [
+            self.engine.process(
+                (shift_hand(pinched, dy=dy),),
+                timestamp,
+            )
+            for timestamp, dy in ((1.16, -0.08), (1.28, -0.12))
+        ]
+        self.assertFalse(any("scroll" in action_kinds(frame) for frame in frames))
+
+    def test_second_pinch_vertical_motion_remains_drag_not_scroll(self):
+        hand = open_hand("Right")
+        pinched = index_pinched_hand("Right")
+        self.engine.process((pinched,), 1.00)
+        self.engine.process((hand,), 1.10)
+        second = self.engine.process((pinched,), 1.30)
+        dragged = self.engine.process((shift_hand(pinched, dy=-0.08),), 1.38)
+        dropout_guard = self.engine.process((hand,), 1.46)
+        released = self.engine.process((hand,), 1.50)
+        self.assertIn("left_down", action_kinds(second))
+        self.assertIn("move", action_kinds(dragged))
+        self.assertNotIn("scroll", action_kinds(dragged))
+        self.assertNotIn("left_up", action_kinds(dropout_guard))
+        self.assertIn("left_up", action_kinds(released))
+
+    def test_sustained_scroll_pose_loss_is_consumed_until_release(self):
+        pinched = index_pinched_hand("Right")
+        for timestamp, dy in ((1.00, 0.0), (1.04, -0.012), (1.08, -0.028)):
+            self.engine.process((shift_hand(pinched, dy=dy),), timestamp)
+        active = self.engine.process((shift_hand(pinched, dy=-0.05),), 1.12)
+        self.assertIn("scroll", action_kinds(active))
+        invalid_pose = index_pinched_with_only_one_free_finger("Right")
+        self.engine.process((shift_hand(invalid_pose, dy=-0.06),), 1.16)
+        consumed = self.engine.process((shift_hand(invalid_pose, dy=-0.07),), 1.28)
+        released = self.engine.process((open_hand("Right"),), 1.36)
+        self.assertNotIn("scroll", action_kinds(consumed))
+        self.assertNotIn("left_click", action_kinds(released))
+
+    def test_consumed_scroll_survives_long_tracking_dropout_until_clear(self):
+        pinched = index_pinched_hand("Right")
+        for timestamp, dy in (
+            (1.00, 0.000),
+            (1.04, -0.012),
+            (1.08, -0.028),
+            (1.12, -0.050),
+        ):
+            active = self.engine.process(
+                (shift_hand(pinched, dy=dy),),
+                timestamp,
+            )
+        self.assertIn("scroll", action_kinds(active))
+
+        missing = (
+            self.engine.process((), 1.16),
+            self.engine.process((), 1.40),
+        )
+        returned_closed = (
+            self.engine.process((shift_hand(pinched, dy=-0.050),), 1.44),
+            self.engine.process((shift_hand(pinched, dy=-0.050),), 1.48),
+        )
+        observed_clear = (
+            self.engine.process((open_hand("Right"),), 1.52),
+            self.engine.process((open_hand("Right"),), 1.60),
+        )
+        protected_kinds = [
+            kind
+            for frame in (*missing, *returned_closed, *observed_clear)
+            for kind in action_kinds(frame)
+        ]
+        self.assertNotIn("left_click", protected_kinds)
+        self.assertNotIn("left_down", protected_kinds)
+        self.assertNotIn("pinch_start", protected_kinds)
+        self.assertFalse(self.engine._pinch_scroll_suppress_click)
+
+        fresh_contact = (
+            self.engine.process((pinched,), 1.80),
+            self.engine.process((pinched,), 1.84),
+            self.engine.process((pinched,), 2.20),
+        )
+        fresh_release = (
+            self.engine.process((open_hand("Right"),), 2.24),
+            self.engine.process((open_hand("Right"),), 2.32),
+        )
+        self.assertTrue(
+            any(
+                "pinch_start" in action_kinds(frame)
+                for frame in fresh_contact
+            )
+        )
+        self.assertTrue(
+            any(
+                "left_click" in action_kinds(frame)
+                for frame in fresh_release
+            )
+        )
+
+    def test_pinch_scroll_burst_is_capped(self):
+        pinched = index_pinched_hand("Right")
+        frames = (
+            self.engine.process((pinched,), 1.00),
+            self.engine.process((shift_hand(pinched, dy=-0.02),), 1.04),
+            self.engine.process((shift_hand(pinched, dy=-0.04),), 1.08),
+            self.engine.process((shift_hand(pinched, dy=-0.11),), 1.12),
+        )
+        amounts = [
+            abs(action.amount)
+            for frame in frames
+            for action in frame.actions
+            if action.kind == "scroll"
+        ]
+        self.assertTrue(amounts)
+        self.assertLessEqual(max(amounts), 2)
+
+    def test_ring_thumb_pinch_middle_clicks_once_and_rejects_closed_hand(self):
+        pinched = ring_pinched_hand("Right")
+        first = self.engine.process((pinched,), 1.00)
+        held = self.engine.process((pinched,), 1.08)
+        released = self.engine.process((open_hand("Right"),), 1.16)
+        self.assertIn("middle_click", action_kinds(first))
+        self.assertNotIn("middle_click", action_kinds(held))
+        self.assertNotIn("middle_click", action_kinds(released))
+
+        engine = GestureEngine()
+        engine.configure(1.0, (0, 0, 1920, 1080))
+        closed = fist("Right")
+        thumb = closed.landmarks[4]
+        closed_contact = with_point(closed, 16, thumb.x + 0.01, thumb.y)
+        frame = engine.process((closed_contact,), 2.0)
+        self.assertNotIn("middle_click", action_kinds(frame))
+
+    def test_invalid_or_disabled_ring_contact_does_not_freeze_pointer(self):
+        opened = open_hand("Right")
+        folded = fist("Right")
+        points = list(opened.landmarks)
+        points[9:13] = folded.landmarks[9:13]
+        points[16] = Landmark(points[4].x + 0.01, points[4].y)
+        invalid_contact = HandObservation("Right", tuple(points))
+        frames = (
+            self.engine.process((invalid_contact,), 1.00),
+            self.engine.process((shift_hand(invalid_contact, dx=0.01),), 1.08),
+        )
+        self.assertTrue(all("move" in action_kinds(frame) for frame in frames))
+        self.assertTrue(all("middle_click" not in action_kinds(frame) for frame in frames))
+
+        disabled = GestureEngine()
+        disabled.configure(
+            1.0,
+            (0, 0, 1920, 1080),
+            tuning={"ring_pinch_middle_click": 0.0},
+        )
+        valid_contact = ring_pinched_hand("Right")
+        self.assertIn("move", action_kinds(disabled.process((valid_contact,), 2.0)))
+        self.assertIn(
+            "move",
+            action_kinds(disabled.process((shift_hand(valid_contact, dx=0.01),), 2.08)),
+        )
+
+    def test_click_contacts_do_not_retrigger_after_pose_flicker(self):
+        middle = open_hand("Right")
+        thumb = middle.landmarks[4]
+        middle = with_point(middle, 12, thumb.x + 0.01, thumb.y)
+        folded = fist("Right")
+        middle_invalid_points = list(middle.landmarks)
+        middle_invalid_points[17:21] = folded.landmarks[17:21]
+        middle_invalid = HandObservation("Right", tuple(middle_invalid_points))
+        middle_frames = (
+            self.engine.process((middle,), 1.00),
+            self.engine.process((middle_invalid,), 1.10),
+            self.engine.process((middle,), 1.50),
+        )
+        self.assertEqual(
+            sum("right_click" in action_kinds(frame) for frame in middle_frames),
+            1,
+        )
+
+        engine = GestureEngine()
+        engine.configure(1.0, (0, 0, 1920, 1080))
+        ring = ring_pinched_hand("Right")
+        ring_invalid_points = list(ring.landmarks)
+        ring_invalid_points[9:13] = folded.landmarks[9:13]
+        ring_invalid = HandObservation("Right", tuple(ring_invalid_points))
+        ring_frames = (
+            engine.process((ring,), 2.00),
+            engine.process((ring_invalid,), 2.10),
+            engine.process((ring,), 2.60),
+        )
+        self.assertEqual(
+            sum("middle_click" in action_kinds(frame) for frame in ring_frames),
+            1,
+        )
+
+    def test_one_clear_index_dropout_does_not_create_false_double_click(self):
+        pinched = index_pinched_hand("Right")
+        opened = open_hand("Right")
+        frames = (
+            self.engine.process((pinched,), 1.00),
+            self.engine.process((pinched,), 1.04),
+            self.engine.process((opened,), 1.08),
+            self.engine.process((pinched,), 1.12),
+        )
+        kinds = [kind for frame in frames for kind in action_kinds(frame)]
+        self.assertNotIn("left_click", kinds)
+        self.assertNotIn("left_down", kinds)
+        self.assertNotIn("left_up", kinds)
 
     def test_pinch_survives_edge_on_collapsed_palm_width(self):
         hand = index_pinched_hand("Right")
@@ -204,7 +655,8 @@ class GestureEngineTests(unittest.TestCase):
         points[17] = Landmark(points[5].x + 0.02, points[5].y, points[5].z)
         edge_on = HandObservation("Right", tuple(points))
         frame = self.engine.process((edge_on,), 1.0)
-        self.assertIn("pinch_start", action_kinds(frame))
+        self.assertTrue(self.engine._index_pinched)
+        self.assertNotIn("left_click", action_kinds(frame))
 
     def test_3d_depth_separation_rejects_a_projected_edge_on_false_pinch(self):
         self.engine.configure(
@@ -249,7 +701,8 @@ class GestureEngineTests(unittest.TestCase):
         first = self.engine.process((borderline,), 1.0)
         confirmed = self.engine.process((borderline,), 1.02)
         self.assertNotIn("pinch_start", action_kinds(first))
-        self.assertIn("pinch_start", action_kinds(confirmed))
+        self.assertTrue(self.engine._index_pinched)
+        self.assertIn("move vertically to scroll", confirmed.gesture)
 
     def test_threshold_jitter_does_not_create_a_false_pinch(self):
         hand = open_hand("Right")
@@ -285,7 +738,7 @@ class GestureEngineTests(unittest.TestCase):
         ]
         recovered = self.engine.process((deep,), 1.16)
         released = self.engine.process((hand,), 1.24)
-        self.assertIn("pinch_start", action_kinds(started))
+        self.assertIn("move vertically to scroll", started.gesture)
         self.assertFalse(any("left_click" in action_kinds(frame) for frame in noisy_frames))
         self.assertNotIn("left_click", action_kinds(recovered))
         self.assertIn("left_click", action_kinds(released))
@@ -320,10 +773,12 @@ class GestureEngineTests(unittest.TestCase):
         self.engine.process((hand,), 1.1)
         second = self.engine.process((pinched,), 1.35)
         held = self.engine.process((shift_hand(pinched, dx=0.04),), 1.42)
-        released = self.engine.process((hand,), 1.5)
+        dropout_guard = self.engine.process((hand,), 1.5)
+        released = self.engine.process((hand,), 1.54)
         self.assertIn("left_down", action_kinds(second))
         self.assertNotIn("move", action_kinds(second))
         self.assertIn("move", action_kinds(held))
+        self.assertNotIn("left_up", action_kinds(dropout_guard))
         self.assertIn("left_up", action_kinds(released))
         self.assertNotIn("move", action_kinds(released))
 
@@ -335,9 +790,11 @@ class GestureEngineTests(unittest.TestCase):
         self.engine.process((hand,), 1.1)
         second = self.engine.process((pinched,), 1.32)
         held = self.engine.process((pinched,), 1.38)
-        released = self.engine.process((hand,), 1.45)
+        dropout_guard = self.engine.process((hand,), 1.45)
+        released = self.engine.process((hand,), 1.49)
         self.assertIn("left_down", action_kinds(second))
         self.assertNotIn("move", action_kinds(held))
+        self.assertNotIn("left_up", action_kinds(dropout_guard))
         self.assertIn("left_up", action_kinds(released))
         self.assertEqual(released.gesture, "Double click")
 
@@ -586,7 +1043,7 @@ class GestureEngineTests(unittest.TestCase):
         contact = self.engine.process((pinched,), 1.1)
         released = self.engine.process((left,), 1.2)
         self.assertIn("move", action_kinds(pointer))
-        self.assertIn("pinch_start", action_kinds(contact))
+        self.assertIn("move vertically to scroll", contact.gesture)
         self.assertIn("left_click", action_kinds(released))
 
     def test_left_handed_mode_keeps_closed_index_click_and_guards_right_click(self):

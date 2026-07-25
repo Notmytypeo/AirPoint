@@ -58,6 +58,17 @@ class SystemControlTests(unittest.TestCase):
             ],
         )
 
+    def test_middle_click_uses_middle_button_down_and_up(self):
+        controller = RecordingMouseController()
+        controller.middle_click()
+        self.assertEqual(
+            controller.events,
+            [
+                (controller.MOUSEEVENTF_MIDDLEDOWN, 0),
+                (controller.MOUSEEVENTF_MIDDLEUP, 0),
+            ],
+        )
+
     def test_center_pointer_uses_virtual_screen_center(self):
         controller = RecordingContextController(None)
         controller.screen_bounds = lambda: (-1920, 0, 3840, 1080)

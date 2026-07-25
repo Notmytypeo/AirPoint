@@ -4,11 +4,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt, QLockFile, QSettings, QSize, QPropertyAnimation, QEasingCurve, QSequentialAnimationGroup, QVariantAnimation, QTimer
-from PySide6.QtGui import QCloseEvent, QIcon, QImage, QPixmap, QColor
+from PySide6.QtCore import QEvent, Qt, QLockFile, QSettings, QPropertyAnimation, QEasingCurve, QSequentialAnimationGroup, QVariantAnimation, QTimer
+from PySide6.QtGui import QAction, QCloseEvent, QIcon, QImage, QPixmap, QColor
 from PySide6.QtWidgets import (
     QApplication,
-    QAbstractSpinBox,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -17,16 +16,17 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QSlider,
-    QSpacerItem,
     QVBoxLayout,
     QWidget,
     QStackedWidget,
+    QSystemTrayIcon,
     QGraphicsOpacityEffect,
 )
 
@@ -34,8 +34,8 @@ from .camera_worker import CameraWorker
 from .startup import is_startup_enabled, set_startup_enabled, startup_supported
 from .styles import APP_STYLE
 from .system_control import disable_background_throttling
+from .single_instance import ActivationServer, request_activation
 from .tuning import DEVELOPER_PARAMETERS, normalized_tuning
-from . import __version__
 
 
 def label(text: str = "", object_name: str = "") -> QLabel:
@@ -208,17 +208,30 @@ class MainWindow(QMainWindow):
         self._repair_unsafe_pinch_profile()
         self._repair_handedness_default()
         self._repair_pointer_response_profile()
+        self._activation_behavior = self._load_activation_behavior()
         # Load theme setting (default to True: dark mode)
         saved_theme_value = self.settings.value("dark_mode", True)
         self.dark_mode = saved_theme_value if isinstance(saved_theme_value, bool) else str(saved_theme_value).lower() == "true"
 
         self.control_active = False
         self._last_paused = False
-        self._developer_tuning = normalized_tuning()
+        self._developer_tuning = self._load_developer_tuning()
         self._developer_inputs: dict[str, QDoubleSpinBox | QCheckBox] = {}
+        self._developer_cards: dict[str, QFrame] = {}
+        self._developer_group_headings: dict[str, QLabel] = {}
         self._focus_updating = False
         self._startup_updating = False
         self._last_hand_state: tuple[bool, bool] | None = None
+        self._tray_icon: QSystemTrayIcon | None = None
+        self._tray_toggle_action: QAction | None = None
+        self._tray_notice_shown = False
+        self._restore_maximized = False
+        self._external_activation_available = True
+        self._force_quit = False
+        self._shutdown_complete = False
+        self._shutdown_in_progress = False
+        self._shutdown_close_requested = False
+        self._shutdown_poll_scheduled = False
 
         root = QWidget()
         root.setObjectName("root")
@@ -233,7 +246,7 @@ class MainWindow(QMainWindow):
         self.gesture_overlay.show()
 
         self.worker = CameraWorker()
-        self.worker.frame_ready.connect(self.camera_view.set_frame)
+        self.worker.frame_ready.connect(self._display_frame)
         self.worker.telemetry.connect(self._update_telemetry)
         self.worker.gesture_changed.connect(self._gesture_changed)
         self.worker.error.connect(self._show_error)
@@ -272,7 +285,29 @@ class MainWindow(QMainWindow):
         self.worker.set_left_handed(saved_left)
         self.worker.set_focus(self.autofocus.isChecked(), self.manual_focus.value(), self.focus_lock.isChecked())
         self.worker.set_tuning(self._developer_tuning)
-        self.worker.start()
+        # Let run() show and register the main window with the Windows taskbar
+        # before the packaged MediaPipe/OpenCV imports begin on the worker.
+        # Those imports can briefly monopolize startup on a cold executable.
+        QTimer.singleShot(0, self.worker.start)
+
+    def _load_activation_behavior(self) -> str:
+        """Load a stable setting while migrating the former boolean option."""
+        allowed = {"keep_open", "minimize_to_taskbar", "hide_to_tray"}
+        saved = self.settings.value("window/activation_behavior")
+        if saved is None:
+            legacy = self.settings.value("minimize_on_activation")
+            if legacy is None:
+                behavior = "keep_open"
+            else:
+                legacy_enabled = legacy if isinstance(legacy, bool) else str(legacy).lower() == "true"
+                behavior = "minimize_to_taskbar" if legacy_enabled else "keep_open"
+        else:
+            behavior = str(saved)
+        if behavior not in allowed:
+            behavior = "keep_open"
+        self.settings.setValue("window/activation_behavior", behavior)
+        self.settings.setValue("window/activation_behavior_revision", 1)
+        return behavior
 
     def _repair_unsafe_pinch_profile(self) -> None:
         """Migrate only stale strict pinch values from the 3D-only revision."""
@@ -313,22 +348,24 @@ class MainWindow(QMainWindow):
         revision = int(self.settings.value("developer/pointer_response_revision", 0))
         if revision >= 5:
             return
-        legacy_to_faster = {
-            "pointer_min_cutoff": (0.70, 0.90),
-            "pointer_beta": (0.90, 1.15),
-            "prediction_cap": (0.014, 0.018),
-            "precision_speed_floor": (0.55, 0.65),
-            "pointer_confidence_floor": (0.45, 0.25),
-            "inference_clahe_clip": (1.60, 0.00),
-            "precision_step": (0.012, 0.013),
-            "precision_speed_floor": (0.65, 0.70),
-            "two_finger_dead_zone": (0.024, 0.018),
-            "pinch_alpha_contact": (0.78, 0.90),
-            "pinch_3d_blend": (0.15, 0.08),
-            "click_settle_delay": (0.050, 0.025),
-            "gesture_settle_delay": (0.10, 0.04),
-        }
-        for key, (legacy_value, improved_value) in legacy_to_faster.items():
+        legacy_to_faster = (
+            ("pointer_min_cutoff", 0.70, 0.90),
+            ("pointer_beta", 0.90, 1.15),
+            ("prediction_cap", 0.014, 0.018),
+            # Keep both historical steps: an untouched 0.55 profile migrates
+            # through 0.65 to the current 0.70 default.
+            ("precision_speed_floor", 0.55, 0.65),
+            ("precision_speed_floor", 0.65, 0.70),
+            ("pointer_confidence_floor", 0.45, 0.25),
+            ("inference_clahe_clip", 1.60, 0.00),
+            ("precision_step", 0.012, 0.013),
+            ("two_finger_dead_zone", 0.024, 0.018),
+            ("pinch_alpha_contact", 0.78, 0.90),
+            ("pinch_3d_blend", 0.15, 0.08),
+            ("click_settle_delay", 0.050, 0.025),
+            ("gesture_settle_delay", 0.10, 0.04),
+        )
+        for key, legacy_value, improved_value in legacy_to_faster:
             saved = self.settings.value(f"developer/{key}")
             if saved is None:
                 self.settings.setValue(f"developer/{key}", improved_value)
@@ -341,6 +378,23 @@ class MainWindow(QMainWindow):
         if self.settings.value("developer/precision_release_seconds") is None:
             self.settings.setValue("developer/precision_release_seconds", 0.07)
         self.settings.setValue("developer/pointer_response_revision", 5)
+
+    def _load_developer_tuning(self) -> dict[str, float]:
+        saved_values: dict[str, float] = {}
+        for parameter in DEVELOPER_PARAMETERS:
+            saved = self.settings.value(f"developer/{parameter.key}")
+            if saved is None:
+                continue
+            try:
+                saved_values[parameter.key] = float(saved)
+            except (TypeError, ValueError):
+                continue
+        normalized = normalized_tuning(saved_values)
+        # Persist any relational repairs so the controls, storage, and live
+        # worker all expose the exact same effective values.
+        for key, value in normalized.items():
+            self.settings.setValue(f"developer/{key}", value)
+        return normalized
 
     def _build_sidebar(self) -> QFrame:
         self.sidebar = QFrame()
@@ -629,6 +683,20 @@ class MainWindow(QMainWindow):
         layout.setSpacing(10)
         layout.addWidget(label("Gesture control", "sectionTitle"))
         layout.addWidget(label("Start or pause hand control", "muted"))
+        layout.addWidget(label("When control starts", "muted"))
+        self.activation_behavior_select = QComboBox()
+        self.activation_behavior_select.addItem("Keep window open", "keep_open")
+        self.activation_behavior_select.addItem("Minimize to taskbar", "minimize_to_taskbar")
+        self.activation_behavior_select.addItem("Hide to notification area", "hide_to_tray")
+        selected = self.activation_behavior_select.findData(self._activation_behavior)
+        self.activation_behavior_select.setCurrentIndex(max(0, selected))
+        self.activation_behavior_select.setToolTip(
+            "Choose what happens to this window after hand control becomes active"
+        )
+        self.activation_behavior_select.currentIndexChanged.connect(
+            self._activation_behavior_changed
+        )
+        layout.addWidget(self.activation_behavior_select)
         layout.addStretch()
         self.activate_button = QPushButton("Enable control")
         self.activate_button.setObjectName("primary")
@@ -763,6 +831,17 @@ class MainWindow(QMainWindow):
         copy.addWidget(label("Live values are saved locally. Hover a control for its effect; Reset restores proven defaults.", "muted"))
         top.addLayout(copy)
         top.addStretch()
+        self.developer_view_select = QComboBox()
+        self.developer_view_select.addItem("Recommended controls", "recommended")
+        self.developer_view_select.addItem("All advanced controls", "all")
+        saved_view = str(self.settings.value("developer/view", "recommended"))
+        view_index = self.developer_view_select.findData(saved_view)
+        self.developer_view_select.setCurrentIndex(max(0, view_index))
+        self.developer_view_select.setToolTip(
+            "Recommended shows everyday tuning; All exposes every bounded algorithm control"
+        )
+        self.developer_view_select.currentIndexChanged.connect(self._developer_view_changed)
+        top.addWidget(self.developer_view_select)
         reset = QPushButton("Reset defaults")
         reset.clicked.connect(self._reset_developer_tuning)
         top.addWidget(reset)
@@ -799,6 +878,7 @@ class MainWindow(QMainWindow):
             if row:
                 row += 1
             heading = label(group.upper(), "developerGroup")
+            self._developer_group_headings[group] = heading
             body_layout.addWidget(heading, row, 0, 1, 2)
             row += 1
             for index, parameter in enumerate(parameters):
@@ -815,19 +895,57 @@ class MainWindow(QMainWindow):
         body_layout.setColumnStretch(1, 1)
         scroll.setWidget(body)
         layout.addWidget(scroll, 1)
+        self._developer_view_changed(self.developer_view_select.currentIndex())
         return page
 
-    def _developer_control(self, parameter) -> QFrame:
-        saved = self.settings.value(f"developer/{parameter.key}", parameter.default)
-        try:
-            value = float(saved)
-        except (TypeError, ValueError):
-            value = parameter.default
-        self._developer_tuning[parameter.key] = max(parameter.minimum, min(parameter.maximum, value))
+    def _developer_view_changed(self, index: int) -> None:
+        mode = self.developer_view_select.itemData(index)
+        if mode not in {"recommended", "all"}:
+            mode = "recommended"
+        self.settings.setValue("developer/view", mode)
+        recommended = {
+            "pointer_min_cutoff",
+            "pointer_beta",
+            "pointer_dead_zone",
+            "workspace_margin",
+            "precision_enabled",
+            "inference_active_fps",
+            "inference_idle_fps",
+            "preview_fps",
+            "face_filter_enabled",
+            "face_scan_interval",
+            "pinch_contact",
+            "pinch_release_grace",
+            "double_click_window",
+            "drag_start_distance",
+            "pause_hold_seconds",
+            "scroll_step",
+            "volume_step",
+            "two_finger_dead_zone",
+            "pinch_scroll_enabled",
+            "pinch_scroll_activation_distance",
+            "pinch_scroll_step",
+            "ring_pinch_middle_click",
+            "adjustable_control_detection",
+            "zoom_step_factor",
+            "swipe_enabled",
+        }
+        visible_keys = set(self._developer_cards) if mode == "all" else recommended
+        for key, card in self._developer_cards.items():
+            card.setVisible(key in visible_keys)
+        for group, heading in self._developer_group_headings.items():
+            group_keys = {
+                parameter.key
+                for parameter in DEVELOPER_PARAMETERS
+                if parameter.group == group
+            }
+            heading.setVisible(bool(group_keys & visible_keys))
 
+    def _developer_control(self, parameter) -> QFrame:
         card = QFrame()
         card.setObjectName("developerRow")
         card.setToolTip(parameter.description)
+        self._developer_cards[parameter.key] = card
         row = QHBoxLayout(card)
         row.setContentsMargins(12, 10, 12, 10)
         row.setSpacing(10)
@@ -888,9 +1006,30 @@ class MainWindow(QMainWindow):
         anim.start()
 
     def _developer_value_changed(self, key: str, value: float) -> None:
-        self._developer_tuning[key] = value
-        self._developer_tuning = normalized_tuning(self._developer_tuning)
-        self.settings.setValue(f"developer/{key}", self._developer_tuning[key])
+        candidate = dict(self._developer_tuning)
+        candidate[key] = value
+        normalized = normalized_tuning(candidate)
+        changed_keys = {
+            parameter_key
+            for parameter_key, normalized_value in normalized.items()
+            if abs(normalized_value - self._developer_tuning.get(parameter_key, normalized_value)) > 1e-9
+        }
+        changed_keys.add(key)
+        self._developer_tuning = normalized
+        for changed_key in changed_keys:
+            normalized_value = normalized[changed_key]
+            self.settings.setValue(f"developer/{changed_key}", normalized_value)
+            control = self._developer_inputs.get(changed_key)
+            if control is None:
+                continue
+            control.blockSignals(True)
+            if isinstance(control, QCheckBox):
+                checked = normalized_value >= 0.5
+                control.setChecked(checked)
+                self._update_toggle_checkbox(control, checked, animate=False)
+            else:
+                control.setValue(normalized_value)
+            control.blockSignals(False)
         if hasattr(self, "worker"):
             self.worker.set_tuning(self._developer_tuning)
 
@@ -948,6 +1087,9 @@ class MainWindow(QMainWindow):
                 if hasattr(self, "dot_anim_group"):
                     self.dot_anim_group.stop()
 
+        if self._tray_toggle_action is not None:
+            self._tray_toggle_action.setText("Pause control" if self.control_active else "Resume control")
+
         if not self.control_active:
             self.activate_button.setText("Enable control")
         elif self._last_paused:
@@ -955,17 +1097,179 @@ class MainWindow(QMainWindow):
         else:
             self.activate_button.setText("Control active")
 
+    def _activation_behavior_changed(self, index: int) -> None:
+        behavior = self.activation_behavior_select.itemData(index)
+        if behavior not in {"keep_open", "minimize_to_taskbar", "hide_to_tray"}:
+            behavior = "keep_open"
+        if behavior == "hide_to_tray" and not self._external_activation_available:
+            behavior = "keep_open"
+            keep_index = self.activation_behavior_select.findData("keep_open")
+            self.activation_behavior_select.blockSignals(True)
+            self.activation_behavior_select.setCurrentIndex(max(0, keep_index))
+            self.activation_behavior_select.blockSignals(False)
+        self._activation_behavior = str(behavior)
+        self.settings.setValue("window/activation_behavior", self._activation_behavior)
+        if (
+            self._activation_behavior != "hide_to_tray"
+            and self._tray_icon is not None
+            and self.isVisible()
+        ):
+            self._tray_icon.hide()
+
+    def _set_external_activation_available(self, available: bool) -> None:
+        """Disable unrecoverable tray hiding if relaunch activation is absent."""
+        self._external_activation_available = bool(available)
+        hide_index = self.activation_behavior_select.findData("hide_to_tray")
+        model = self.activation_behavior_select.model()
+        if hide_index >= 0 and hasattr(model, "item"):
+            item = model.item(hide_index)
+            if item is not None:
+                item.setEnabled(self._external_activation_available)
+        if not self._external_activation_available:
+            if self._activation_behavior == "hide_to_tray":
+                keep_index = self.activation_behavior_select.findData("keep_open")
+                self.activation_behavior_select.setCurrentIndex(max(0, keep_index))
+            self._show_error(
+                "Automatic restore from a second launch is unavailable. "
+                "Notification-area hiding is disabled for this session."
+            )
+
+    def _ensure_tray_icon(self) -> bool:
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return False
+        if self._tray_icon is not None:
+            return True
+
+        tray = QSystemTrayIcon(self.windowIcon(), self)
+        tray.setToolTip("AirPoint Gesture Control")
+        menu = QMenu(self)
+        open_action = QAction("Open AirPoint", self)
+        open_action.triggered.connect(self._show_from_tray)
+        menu.addAction(open_action)
+        self._tray_toggle_action = QAction("Pause control", self)
+        self._tray_toggle_action.triggered.connect(self._toggle_control_from_tray)
+        menu.addAction(self._tray_toggle_action)
+        menu.addSeparator()
+        quit_action = QAction("Quit AirPoint", self)
+        quit_action.triggered.connect(self._quit_from_tray)
+        menu.addAction(quit_action)
+        tray.setContextMenu(menu)
+        tray.activated.connect(self._tray_activated)
+        self._tray_icon = tray
+        return True
+
+    def _tray_activated(self, reason) -> None:
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self._show_from_tray()
+
+    def _hide_to_tray(self) -> bool:
+        if not self._ensure_tray_icon():
+            return False
+        assert self._tray_icon is not None
+        self._restore_maximized = self.isMaximized()
+        self.worker.set_preview_enabled(False)
+        self._tray_icon.show()
+        self.hide()
+        if not self._tray_notice_shown:
+            self._tray_icon.showMessage(
+                "AirPoint is still tracking",
+                "Use the notification-area icon to open AirPoint, pause control, or quit.",
+                QSystemTrayIcon.MessageIcon.Information,
+                3500,
+            )
+            self._tray_notice_shown = True
+        return True
+
+    def _show_from_tray(self, *_args) -> None:
+        if self._restore_maximized:
+            self.showMaximized()
+        else:
+            self.showNormal()
+        if not self._shutdown_in_progress:
+            self.worker.set_preview_enabled(True)
+        self.raise_()
+        self.activateWindow()
+
+    def _activate_from_external_launch(self) -> None:
+        """Restore and focus this window when a second launcher connects."""
+        if not self.isVisible():
+            if getattr(self, "_shutdown_in_progress", False):
+                self.showNormal()
+                self.raise_()
+                self.activateWindow()
+            else:
+                self._show_from_tray()
+            return
+        if self.isMinimized():
+            was_maximized = bool(self.windowState() & Qt.WindowMaximized)
+            if was_maximized:
+                self.showMaximized()
+            else:
+                self.showNormal()
+            if not getattr(self, "_shutdown_in_progress", False):
+                self.worker.set_preview_enabled(True)
+        self.raise_()
+        self.activateWindow()
+
+    def _toggle_control_from_tray(self, *_args) -> None:
+        # Keep tray and main-button activation behavior identical, including
+        # the selected keep/minimize/hide policy when tracking resumes.
+        self._toggle_control()
+
+    def _quit_from_tray(self, *_args) -> None:
+        self._force_quit = True
+        self._shutdown_close_requested = True
+        if not self._shutdown():
+            # Show the non-interactive stopping state without restarting
+            # preview work or making the dying QThread resumable.
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+            return
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
+    def _apply_activation_window_behavior(self) -> None:
+        if not self.control_active:
+            return
+        if self._activation_behavior == "minimize_to_taskbar":
+            self.showMinimized()
+        elif self._activation_behavior == "hide_to_tray":
+            if not self._hide_to_tray():
+                # Never make the application unrecoverable on systems without
+                # a notification area; taskbar minimization is the safe fallback.
+                self.showMinimized()
+
     def _toggle_control(self) -> None:
+        if getattr(self, "_shutdown_in_progress", False) or getattr(
+            self,
+            "_shutdown_complete",
+            False,
+        ):
+            return
+        was_active = self.control_active
         self.control_active = not self.control_active
         self.worker.set_enabled(self.control_active)
         self._update_activate_style()
-        if self.control_active:
-            QTimer.singleShot(100, self.showMinimized)
+        if self.control_active and not was_active:
+            self._apply_activation_window_behavior()
 
     def _startup_gesture_activated(self) -> None:
+        if getattr(self, "_shutdown_in_progress", False) or getattr(
+            self,
+            "_shutdown_complete",
+            False,
+        ):
+            return
+        was_active = self.control_active
         self.control_active = True
         self._update_activate_style()
-        QTimer.singleShot(100, self.showMinimized)
+        if not was_active:
+            self._apply_activation_window_behavior()
 
     def _camera_changed(self, index: int) -> None:
         if not hasattr(self, "worker"):
@@ -1073,6 +1377,14 @@ class MainWindow(QMainWindow):
         if self.fps_label.text() != fps_text:
             self.fps_label.setText(fps_text)
 
+    def _display_frame(self, image: QImage) -> None:
+        try:
+            self.camera_view.set_frame(image)
+        finally:
+            # Never permanently consume the worker's one-frame backpressure
+            # slot if a transient Qt paint/conversion error occurs.
+            self.worker.acknowledge_preview()
+
     def _paused_changed(self, paused: bool) -> None:
         self._last_paused = paused
         self._update_activate_style()
@@ -1097,19 +1409,80 @@ class MainWindow(QMainWindow):
         if value >= 100:
             self.download_progress.hide()
 
-    def closeEvent(self, event: QCloseEvent) -> None:
+    def _shutdown(self) -> bool:
+        if self._shutdown_complete:
+            return True
+        if self._shutdown_in_progress:
+            return False
+        self._shutdown_in_progress = True
         self.control_active = False
         self.worker.set_enabled(False)
+        self.worker.set_preview_enabled(False)
+        self._update_activate_style()
+        self.activate_button.setEnabled(False)
+        self.activate_button.setText("Stopping...")
+        # Stop is deliberately request-only here. Camera/model cleanup can
+        # take time, so the GUI remains responsive and polls the QThread
+        # asynchronously instead of entering a multi-second wait.
+        if not self.worker.stop(timeout_ms=0):
+            self._show_error(
+                "AirPoint is waiting for the camera worker to stop safely. "
+                "The window will close automatically when cleanup finishes."
+            )
+            self._schedule_shutdown_poll()
+            return False
+        self._finalize_shutdown()
+        return True
+
+    def _finalize_shutdown(self) -> None:
+        if self._shutdown_complete:
+            return
         self.gesture_overlay.close()
-        self.worker.stop()
-        event.accept()
+        if self._tray_icon is not None:
+            self._tray_icon.hide()
+        self._shutdown_complete = True
+        self._shutdown_in_progress = False
+
+    def _schedule_shutdown_poll(self) -> None:
+        if self._shutdown_poll_scheduled or self._shutdown_complete:
+            return
+        self._shutdown_poll_scheduled = True
+        QTimer.singleShot(250, self._poll_shutdown)
+
+    def _poll_shutdown(self) -> None:
+        self._shutdown_poll_scheduled = False
+        if self._shutdown_complete:
+            return
+        if self.worker.isRunning():
+            self._schedule_shutdown_poll()
+            return
+        self._finalize_shutdown()
+        if self._shutdown_close_requested:
+            QTimer.singleShot(0, self.close)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if (
+            not self._force_quit
+            and self.control_active
+            and self._activation_behavior == "hide_to_tray"
+            and self._hide_to_tray()
+        ):
+            event.ignore()
+            return
+        self._shutdown_close_requested = True
+        if self._shutdown():
+            event.accept()
+        else:
+            event.ignore()
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
         if event.type() == QEvent.WindowStateChange and hasattr(self, "worker"):
             # Tracking continues while minimized, but camera drawing, QImage
             # copies, scaling, and telemetry repaints are suspended.
-            self.worker.set_preview_enabled(not self.isMinimized())
+            self.worker.set_preview_enabled(
+                not self._shutdown_in_progress and not self.isMinimized()
+            )
 
 
 def run() -> int:
@@ -1124,18 +1497,32 @@ def run() -> int:
     lock_path = str(Path(tempfile.gettempdir()) / "AirPoint-GestureControl.lock")
     instance_lock = QLockFile(lock_path)
     if not instance_lock.tryLock(100):
-        QMessageBox.information(None, "AirPoint is already running", "AirPoint already has an open window.")
+        if not request_activation():
+            QMessageBox.information(
+                None,
+                "AirPoint is already running",
+                "AirPoint is running, but its window could not be restored automatically. "
+                "Open it from the taskbar or notification area.",
+            )
         return 0
 
-    disable_background_throttling()
-    window = MainWindow()
-    if "--minimized" in sys.argv:
-        window.worker.set_preview_enabled(False)
-        window.showMinimized()
-    elif "--maximized" in sys.argv:
-        window.showMaximized()
-    else:
-        window.show()
-    result = app.exec()
-    instance_lock.unlock()
-    return result
+    # Listen before constructing the relatively heavy camera UI. Connections
+    # queue until the event loop starts, eliminating the launch-time race.
+    activation_server = ActivationServer(parent=app)
+    activation_available = activation_server.listen()
+    try:
+        disable_background_throttling()
+        window = MainWindow()
+        window._set_external_activation_available(activation_available)
+        activation_server.activation_requested.connect(window._activate_from_external_launch)
+        if "--minimized" in sys.argv:
+            window.worker.set_preview_enabled(False)
+            window.showMinimized()
+        elif "--maximized" in sys.argv:
+            window.showMaximized()
+        else:
+            window.show()
+        return app.exec()
+    finally:
+        activation_server.close()
+        instance_lock.unlock()

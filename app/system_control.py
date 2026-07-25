@@ -107,6 +107,8 @@ class InputController:
     MOUSEEVENTF_LEFTUP = 0x0004
     MOUSEEVENTF_RIGHTDOWN = 0x0008
     MOUSEEVENTF_RIGHTUP = 0x0010
+    MOUSEEVENTF_MIDDLEDOWN = 0x0020
+    MOUSEEVENTF_MIDDLEUP = 0x0040
     MOUSEEVENTF_WHEEL = 0x0800
     MOUSEEVENTF_VIRTUALDESK = 0x4000
     MOUSEEVENTF_ABSOLUTE = 0x8000
@@ -166,6 +168,10 @@ class InputController:
     def right_click(self) -> None:
         self._mouse(self.MOUSEEVENTF_RIGHTDOWN)
         self._mouse(self.MOUSEEVENTF_RIGHTUP)
+
+    def middle_click(self) -> None:
+        self._mouse(self.MOUSEEVENTF_MIDDLEDOWN)
+        self._mouse(self.MOUSEEVENTF_MIDDLEUP)
 
     def left_down(self) -> None:
         if not self._left_held:
