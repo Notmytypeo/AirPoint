@@ -98,6 +98,37 @@ class PointFilterTests(unittest.TestCase):
         recovered = smoothing.apply(0.405, 0.4, 2 / 60, confidence=0.8)
         self.assertLess(math.hypot(recovered[0] - 0.4, recovered[1] - 0.4), 0.03)
 
+    def test_rejected_measurement_holds_the_last_emitted_pointer_position(self):
+        smoothing = PointFilter(dead_zone=0.0, jump_threshold=0.04)
+        smoothing.apply(0.20, 0.5, 0.0, confidence=0.6)
+        smoothing.apply(0.23, 0.5, 1 / 60, confidence=0.6)
+        emitted = smoothing.apply(0.26, 0.5, 2 / 60, confidence=0.6)
+
+        held = smoothing.apply(0.80, 0.5, 3 / 60, confidence=0.2)
+
+        self.assertEqual(held, emitted)
+
+    def test_constant_velocity_survives_a_dropped_frame_gap(self):
+        smoothing = PointFilter(
+            dead_zone=0.0,
+            jump_threshold=0.06,
+            lookahead_frames=0.0,
+        )
+        outputs = [
+            smoothing.apply(x, 0.5, timestamp, confidence=0.6)
+            for timestamp, x in (
+                (0.0, 0.20),
+                (1 / 60, 0.22),
+                (2 / 60, 0.24),
+                (3 / 60, 0.26),
+                # Three camera frames are dropped, but physical velocity is
+                # unchanged. Timestamp-aware gating should accept this sample.
+                (7 / 60, 0.34),
+            )
+        ]
+
+        self.assertGreater(outputs[-1][0], outputs[-2][0] + 0.005)
+
     def test_consistent_fast_motion_is_accepted_after_jump_confirmation(self):
         smoothing = PointFilter(jump_threshold=0.06)
         smoothing.apply(0.2, 0.5, 0.0, confidence=0.6)

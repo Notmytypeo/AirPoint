@@ -8,7 +8,7 @@ You do **not** need to download the source code or install Python. Choose one op
 
 | Your computer | Download | Beginner guide |
 |---|---|---|
-| **Windows 10 or 11** | [AirPoint Windows installer (.exe)](https://github.com/Notmytypeo/AirPoint/releases/latest/download/AirPoint_Setup_1.4.1.exe) | [Windows installation guide](windows_installer/README.md) |
+| **Windows 10 or 11** | [AirPoint Windows installer (.exe)](https://github.com/Notmytypeo/AirPoint/releases/latest/download/AirPoint_Setup_1.4.2.exe) | [Windows installation guide](windows_installer/README.md) |
 | **MacBook with Apple chip** (M1, M2, M3, or M4) | [AirPoint Apple Silicon installer (.zip)](https://github.com/Notmytypeo/AirPoint/releases/latest/download/AirPoint-macOS-arm64.zip) | [macOS installation guide](mac_installer/README.md) |
 | **Older Intel MacBook** | Download `AirPoint-macOS-x86_64.zip` from the [latest release](https://github.com/Notmytypeo/AirPoint/releases/latest) when available | [macOS installation guide](mac_installer/README.md) |
 
@@ -95,7 +95,7 @@ Build the versioned PyInstaller bundle and Inno Setup installer:
 .\build_installer.ps1
 ```
 
-The distributable installer is written to `installer_output\AirPoint_Setup_1.4.1.exe`. The version comes from `app/__init__.py`, and the same value is embedded in the app executable and passed into Inno Setup. The tracked `AirPoint.spec` file is required for reproducible builds; generated `build/`, `dist/`, and installer output remain excluded from Git.
+The distributable installer is written to `installer_output\AirPoint_Setup_1.4.2.exe`. The version comes from `app/__init__.py`, and the same value is embedded in the app executable and passed into Inno Setup. The tracked `AirPoint.spec` file is required for reproducible builds; generated `build/`, `dist/`, and installer output remain excluded from Git.
 
 ## Build a macOS .app bundle
 
@@ -129,7 +129,7 @@ AirPoint also enforces a single running instance so two windows cannot compete f
 The current gesture is shown in a click-through, always-on-top badge at the bottom-left of the primary display. It stays updated while the main AirPoint window is minimized.
 When minimized, AirPoint switches to tracking-only mode: preview rendering and UI telemetry pause while gesture processing retains HighQoS background execution.
 Pinches use a calibrated blend of the original 2D thumb-to-fingertip ratio and MediaPipe world-landmark 3D separation, both normalized by palm scale. The 2D signal keeps front-facing contact responsive; the 3D component rejects edge-on projected overlaps. The Developer tab exposes the 3D blend. Deep contact remains immediate, while lightweight ratio smoothing, brief boundary confirmation, and one-frame clear-release dropout protection prevent landmark jitter from creating or interrupting pinches.
-Pointer motion uses a responsive One Euro filter plus a tiny radial tremor dead zone. Its amplified central workspace reaches screen edges with roughly 20% less physical hand travel while retaining sensitivity adjustment. Face rejection scans a 256-pixel image on a separate worker roughly twice per second, so eyeglasses/face protection no longer stalls capture or neural inference. New tracks wait for two independent clean face-scan source frames before they can become continuity-qualified.
+Pointer motion uses a responsive One Euro filter plus a tiny radial tremor dead zone. Its confidence gate estimates velocity from timestamps rather than frame count, so steady movement stays responsive across variable inference cadence and dropped frames; rejected landmarks hold the exact last emitted pointer position instead of snapping back behind prediction. Its amplified central workspace reaches screen edges with roughly 20% less physical hand travel while retaining sensitivity adjustment. Face rejection scans a 256-pixel image on a separate worker roughly twice per second, so eyeglasses/face protection no longer stalls capture or neural inference. New tracks wait for two independent clean face-scan source frames before they can become continuity-qualified.
 The pointer locks to its last stable position during click pinches and for 25 ms after release, preventing finger closure or separation from moving the click target. Dragging uses an anchored offset so movement begins from the locked cursor position.
 Double pinching the right index finger performs the normal first click, then uses a movement threshold on the second pinch: releasing without movement completes a double click, while moving beyond the threshold continues as a drag.
 Two-hand zoom requires index-thumb contact on both hands while at least two of the other three fingers remain visibly free; naturally curved free fingers are accepted. A left index pinch is explicitly excluded from left-fist scroll mode. Pinch-center distance is exponentially smoothed, uses a starting-separation-relative 5.5% step, and is rate-limited to one `Ctrl+wheel` step every 90 ms; both pinches must release before clicks resume.

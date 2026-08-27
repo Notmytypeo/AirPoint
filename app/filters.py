@@ -92,9 +92,11 @@ class PointFilter:
         self.jump_threshold = max(0.01, jump_threshold)
         self.prediction_reversal_guard = bool(prediction_reversal_guard)
         self._last_base: tuple[float, float] | None = None
+        self._last_output: tuple[float, float] | None = None
         self._last_time: float | None = None
         self._velocity = (0.0, 0.0)
         self._last_measurement: tuple[float, float] | None = None
+        self._last_measurement_time: float | None = None
         self._measurement_velocity = (0.0, 0.0)
         self._rejected_measurement: tuple[float, float] | None = None
         self._precision_memory = 0.0
@@ -151,9 +153,18 @@ class PointFilter:
         quality = 1.0 if confidence is None else max(0.0, min(1.0, confidence))
         if self._last_measurement is not None:
             previous = self._last_measurement
+            measurement_dt = min(
+                max(
+                    timestamp - self._last_measurement_time
+                    if self._last_measurement_time is not None
+                    else 1.0 / 60.0,
+                    1.0 / 240.0,
+                ),
+                0.2,
+            )
             expected = (
-                previous[0] + self._measurement_velocity[0],
-                previous[1] + self._measurement_velocity[1],
+                previous[0] + self._measurement_velocity[0] * measurement_dt,
+                previous[1] + self._measurement_velocity[1] * measurement_dt,
             )
             innovation = math.hypot(measurement[0] - expected[0], measurement[1] - expected[1])
             # Only uncertain landmark samples need jump rejection. Handedness
@@ -171,6 +182,11 @@ class PointFilter:
             if confidence_enabled and uncertain_sample and innovation > jump_limit and not consistent_motion:
                 self._rejected_measurement = measurement
                 self._velocity = (self._velocity[0] * 0.55, self._velocity[1] * 0.55)
+                # Prediction is part of the position already emitted to the
+                # operating system. Holding the internal, unpredicted base
+                # would make a rejected observation pull the cursor backward.
+                if self._last_output is not None:
+                    return self._last_output
                 return self._last_base if self._last_base is not None else previous
             self._rejected_measurement = None
             if confidence_enabled:
@@ -187,20 +203,41 @@ class PointFilter:
         filtered = (self.x(measurement[0], timestamp), self.y(measurement[1], timestamp))
         if self._last_base is None:
             self._last_base = filtered
+            self._last_output = filtered
             self._last_time = timestamp
             self._last_measurement = measurement
+            self._last_measurement_time = timestamp
             return filtered
 
         assert self._last_measurement is not None
+        measurement_dt = min(
+            max(
+                timestamp - self._last_measurement_time
+                if self._last_measurement_time is not None
+                else 1.0 / 60.0,
+                1.0 / 240.0,
+            ),
+            0.2,
+        )
         measured_step = (
             measurement[0] - self._last_measurement[0],
             measurement[1] - self._last_measurement[1],
         )
+        instantaneous_velocity = (
+            measured_step[0] / measurement_dt,
+            measured_step[1] / measurement_dt,
+        )
+        # Match the previous 0.55 update weight at 60 FPS while keeping the
+        # velocity estimate stable when frames are early, late, or dropped.
+        velocity_alpha = 1.0 - 0.45 ** (measurement_dt * 60.0)
         self._measurement_velocity = (
-            self._measurement_velocity[0] * 0.45 + measured_step[0] * 0.55,
-            self._measurement_velocity[1] * 0.45 + measured_step[1] * 0.55,
+            self._measurement_velocity[0] * (1.0 - velocity_alpha)
+            + instantaneous_velocity[0] * velocity_alpha,
+            self._measurement_velocity[1] * (1.0 - velocity_alpha)
+            + instantaneous_velocity[1] * velocity_alpha,
         )
         self._last_measurement = measurement
+        self._last_measurement_time = timestamp
 
         dx = filtered[0] - self._last_base[0]
         dy = filtered[1] - self._last_base[1]
@@ -236,7 +273,8 @@ class PointFilter:
         if distance <= self.dead_zone:
             self._velocity = (self._velocity[0] * 0.45, self._velocity[1] * 0.45)
             self._last_time = timestamp
-            return self._last_base
+            self._last_output = self._last_base
+            return self._last_output
 
         movement = (distance - self.dead_zone) / distance
         base = (
@@ -272,18 +310,21 @@ class PointFilter:
         predicted_dy = max(-self.prediction_cap, min(self.prediction_cap, self._velocity[1] * lookahead))
         self._last_base = base
         self._last_time = timestamp
-        return (
+        self._last_output = (
             max(0.0, min(1.0, base[0] + predicted_dx)),
             max(0.0, min(1.0, base[1] + predicted_dy)),
         )
+        return self._last_output
 
     def reset(self) -> None:
         self.x.reset()
         self.y.reset()
         self._last_base = None
+        self._last_output = None
         self._last_time = None
         self._velocity = (0.0, 0.0)
         self._last_measurement = None
+        self._last_measurement_time = None
         self._measurement_velocity = (0.0, 0.0)
         self._rejected_measurement = None
         self._precision_memory = 0.0
